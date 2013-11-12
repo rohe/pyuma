@@ -41,6 +41,17 @@ class ResourceSetDB(object):
         rset = ResourceSetDescription(**item)
         return rset
 
+    def find(self, **kwargs):
+        item = self.collection.find_one(kwargs)
+
+        if not item:
+            raise UnknownObject()
+
+        # item is dictionary, want _id as string not as ObjectId
+        item["_id"] = str(item["_id"])
+        rset = ResourceSetDescription(**item)
+        return rset
+
     def create(self, data, mid=None):
         # Just to assert that the data is a resource set description
         rset = ResourceSetDescription().deserialize(data, "json")

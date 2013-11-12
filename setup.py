@@ -21,7 +21,7 @@ __author__ = 'rohe0002'
 
 setup(
     name="uma",
-    version="0.1.1",
+    version="0.2.0",
     description="Python implementation of UMA (User Managed Access)",
     author = "Roland Hedberg",
     author_email = "roland.hedberg@umu.se",

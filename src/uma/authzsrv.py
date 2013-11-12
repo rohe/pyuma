@@ -51,6 +51,10 @@ class AuthnFailed(Exception):
     pass
 
 
+class UnknownResourceSet(Exception):
+    pass
+
+
 class AuthorizationRequestEndpoint(Endpoint):
     etype = "authorization_request"
 
@@ -79,7 +83,23 @@ class DynamicClientEndpoint(Endpoint):
     etype = "dynamic_client"
 
 
+def cmp_scopes(permission, allow_scopes):
+    _scopes = []
+    
+    for scope in permission["scopes"]:
+        if scope in allow_scopes:
+            _scopes.append(scope)
+        else:
+            for asc in allow_scopes:
+                if scope.startswith(asc):
+                    _scopes.append(scope)
+                    break
+                    
+    return _scopes
+
+
 class Session(object):
+    # Storage for access tokens
     def __init__(self, lifetime=3600):
         self.db = {}
         self.lifetime = lifetime
@@ -123,6 +143,82 @@ class Session(object):
         self.db[token].update(kwargs)
 
 
+class Permission(object):
+    def __init__(self):
+        self.db = {}
+
+    def init_owner(self, owner):
+        self.db[owner] = {
+            "request": {},
+            "permit": {},
+            "accepted": {}
+        }
+
+    def add_request(self, owner, ticket, req):
+        if owner not in self.db:
+            self.init_owner(owner)
+
+        self.db[owner]["request"][ticket] = req
+
+    def get_request(self, owner, ticket):
+        return self.db[owner]["request"][ticket]
+
+    def get_outstanding_requests(self, owner):
+        """
+        :param owner:
+        :return: A dictionary of tickets and requests
+        """
+        return self.db[owner]["request"]
+
+    def del_request(self, owner, ticket):
+        """
+        Remove a specific permission request
+        :param owner: The owner of the resource
+        :param ticket: The ticket returned when the request was registered
+        """
+        del self.db[owner]["request"][ticket]
+
+    def set_permit(self, owner, requestor, resource_id, scopes):
+        if owner not in self.db:
+            self.init_owner(owner)
+
+        _perm = self.db[owner]["permit"]
+        try:
+            _perm[requestor][resource_id] = scopes
+        except KeyError:
+            try:
+                _perm[requestor] = {resource_id: scopes}
+            except KeyError:
+                _perm = {requestor: {resource_id: scopes}}
+
+    def get_permit(self, owner, requestor, resource_id):
+        return self.db[owner]["permit"][requestor][resource_id]
+
+    def get_permits(self, owner):
+        """
+        :param owner: The owner of the resource
+        :return: A dictionary with requestors as keys and list of resource_ids
+            as values
+        """
+        res = {}
+        for requestor, info in self.db[owner]["permit"].items():
+            res[requestor] = info.keys()
+        return res
+
+    def set_accepted(self, owner, rpt, authz_desc):
+        if owner not in self.db:
+            self.init_owner(owner)
+
+        _acc = self.db[owner]["accepted"]
+        try:
+            _acc[rpt] = authz_desc
+        except KeyError:
+            _acc = {rpt: authz_desc}
+
+    def get_accepted(self, owner, rpt):
+        return self.db[owner]["accepted"][rpt]
+
+
 class UmaAS(object):
     endp = [ResourceSetRegistrationEndpoint, IntrospectionEndpoint,
             RPTEndpoint, PermissionRegistrationEndpoint,
@@ -133,13 +229,16 @@ class UmaAS(object):
 
         self.conf_info = configuration or {}
         self.resource_set = ResourceSetDB(DB_NAME, COLLECTION)
-        self.authzdb = {}
         self.rpt = {}
         self.baseurl = baseurl
         if not self.baseurl.endswith("/"):
             self.baseurl += "/"
         self.session = Session()
         self.temporary_perm = {}
+        self.permit = Permission()
+        self.map_rsid_id = {}
+        self.map_id_rsid = {}
+        self.map_user_id = {}
 
     def endpoints(self):
         for endp in self.endp:
@@ -166,7 +265,7 @@ class UmaAS(object):
         msg = RPTResponse(rpt=rpt)
         return Response(msg.to_json(), content="application/json")
 
-    def resource_set_registration_endpoint_(self, path, method, body="", 
+    def resource_set_registration_endpoint_(self, path, method, body="",
                                             owner="", client_id="",
                                             if_match="", **kwargs):
         """
@@ -203,11 +302,19 @@ class UmaAS(object):
                 func = self.resource_set.update
                 args = {"mid": if_match}
             else:  # Read
+                try:
+                    mid = self.map_rsid_id[rsid]
+                except KeyError:
+                    raise UnknownResourceSet(rsid)
                 func = self.resource_set.read
-                args = {"mid": rsid}
+                args = {"mid": mid}
         elif method == "DELETE":
+            try:
+                mid = self.map_rsid_id[rsid]
+            except KeyError:
+                raise UnknownResourceSet(rsid)
             func = self.resource_set.delete
-            args = {"mid": rsid}
+            args = {"mid": mid}
         else:
             return BadRequest("Message error")
 
@@ -216,14 +323,38 @@ class UmaAS(object):
         except MessageException:
             response = BadRequest("Message error")
         else:
+            if func == self.resource_set.create:
+                _id = body["_id"]
+                self.map_rsid_id[rsid] = _id
+                self.map_id_rsid[_id] = rsid
+                try:
+                    self.map_user_id[owner].append(_id)
+                except KeyError:
+                    self.map_user_id[owner] = [_id]
+
             response = Response(body.to_json(), content="application/json")
 
         return response
 
+    def resource_sets_by_user(self, user):
+        """
+        :param user: The user for which resource set descriptions has been
+            registered.
+        :return: A list of ResourceSetDescriptions
+        """
+        res = []
+        for _id in self.map_user_id[user]:
+            try:
+                res.append(self.resource_set.read(_id))
+            except Exception, err:
+                raise
+
+        return res
+
     def authz_session_info(self, token):
         pass
 
-    def introspection_endpoint_(self, request="", **kwargs):
+    def introspection_endpoint_(self, request="", owner="", **kwargs):
         """
         The endpoint URI at which the resource server introspects an RPT
         presented to it by a client.
@@ -236,8 +367,14 @@ class UmaAS(object):
                 active=True,
                 expires_at=_info["expires_at"],
             )
-            if "permissions" in _info:
-                irep["permissions"] = _info["permissions"]
+            try:
+                requestor = self.rpt[ir["token"]]["requestor"]
+                perms = self.permit.get_accepted(requestor, ir["token"])
+            except KeyError:
+                pass
+            else:
+                if perms:
+                    irep["permissions"] = perms
 
             response = Response(irep.to_json(), content="application/json")
         except ToOld:
@@ -258,6 +395,7 @@ class UmaAS(object):
         _ticket = rndstr(24)
         self.temporary_perm[_ticket] = request
         resp = PermissionRegistrationResponse(ticket=_ticket)
+        self.permit.add_request(owner, _ticket, request)
 
         return Created(resp.to_json(), content="application/json")
 
@@ -336,22 +474,56 @@ class UmaAS(object):
 
     def authorization_request_endpoint_(self, request="", owner="",
                                         client_id="", **kwargs):
+        """
+        Registers an Authorization Description
+
+        :param request:
+        :param owner: typically user@domain@sp_entity_id
+        :param client_id: The UMA client, in essence the IdP
+        :return: A Response instance
+        """
+        user, requestor = owner.rsplit("@", 1)
+
         adr = AuthorizationDataRequest().from_json(request)
         permission = AuthzDescription().from_json(
-            self.temporary_perm[adr["ticket"]])
+            self.permit.get_request(user, adr["ticket"]))
 
         # Verify that the scopes are defined for the resource set
-        # TODO Check if the users allows this, right now assume that is so
+        _mid = self.map_rsid_id[permission["resource_set_id"]]
+        rsd = self.resource_set.read(_mid)
+        for scope in permission["scopes"]:
+            try:
+                assert scope in rsd["scopes"]
+            except AssertionError:
+                return BadRequest()
+
+        allow_scopes = self.permit.get_permit(user, requestor,
+                                              permission["resource_set_id"])
+        _scopes = cmp_scopes(permission, allow_scopes)
 
         now = time.time()
         # resource_set_id should be gotten from the RPT
         perm = AuthzDescription(resource_set_id=permission["resource_set_id"],
-                                scopes=permission["scopes"],
-                                expires_at=now+self.session.lifetime,
+                                scopes=_scopes,
+                                expires_at=now + self.session.lifetime,
                                 issued_at=now)
 
-        self.session.add_permissions(adr["rpt"], perm)
+        self.permit.set_accepted(owner, adr["rpt"], perm)
         return Response("OK")
+
+    def store_permission(self, user, sp_entity_id, name, scopes):
+        """
+        :param user:
+        :param sp_entity_id:
+        :param scopes:
+        """
+        obj = self.resource_set.find(name=name)
+        rsid = self.map_id_rsid[obj["_id"]]
+
+        for scope in scopes:
+            assert scope in obj["scopes"]
+
+        self.permit.set_permit(user, sp_entity_id, rsid, scopes)
 
 # ----------------------------------------------------------------------------
 
@@ -528,10 +700,10 @@ class OIDCUmaAS(OIDCProvider, UmaAS):
 
     def introspection_endpoint(self, request="", authn="", **kwargs):
         try:
-            _ = self.client_authentication(authn)
+            owner, client_id = self.client_authentication(authn)
         except AuthnFailed:
             return Unauthorized()
-        return self.introspection_endpoint_(request, **kwargs)
+        return self.introspection_endpoint_(request, owner, **kwargs)
 
     def create_providerinfo(self, pcr_class=OIDCProviderConfiguration):
         _response = OIDCProvider.create_providerinfo(self, pcr_class)

@@ -1,6 +1,8 @@
+import urllib
 from oic.oauth2 import rndstr
 from oic.oauth2.exception import MissingSession
 from oic.oic.consumer import Consumer
+from oic.utils.authn.authn_context import PASSWORD
 from uma.message import AuthorizationDataRequest, RPTResponse
 from uma import UMAError
 
@@ -9,6 +11,7 @@ __author__ = 'rolandh'
 
 class ConnectionFailure(Exception):
     pass
+
 
 UMA_SCOPE = {
     "AAT": "http://docs.kantarainitiative.org/uma/scopes/authz.json",
@@ -44,7 +47,7 @@ class Client(Consumer):
         # token per user
         self.token = {}
         self.behaviour = {"require_signed_request_object":
-                          DEF_SIGN_ALG["openid_request_object"]}
+                              DEF_SIGN_ALG["openid_request_object"]}
 
         self.registration_info = registration_info
         self.allow = {}
@@ -73,7 +76,7 @@ class Client(Consumer):
         if token_type in ["AAT", "PAT"]:
             return UMA_SCOPE[token_type]
 
-    def acquire_grant(self, resource_server, token_type, userid):
+    def acquire_grant(self, resource_server, token_type, userid, state=""):
         """
         Get a grant by which a PAT/AAT token can be acquired from the server
 
@@ -91,16 +94,25 @@ class Client(Consumer):
         self.init_relationship(resource_server)
 
         # And eventually do an Authorization request
-        _state = rndstr(16)
-        self.state[_state] = userid
+        if not state:
+            state = rndstr(16)
+        self.state[state] = userid
 
         request_args = {"response_type": "code",
                         "client_id": self.client_id,
                         "redirect_uri": self.redirect_uris[0],
                         "scope": [self.get_uma_scope(token_type), "openid"],
-                        "state":_state}
+                        "state": state,
+                        "acr_values": [PASSWORD]}
 
-        return self.do_authorization_request(request_args=request_args)
+        # Authenticate using HTTP basic authn
+        http_args = self.client_authn_method[
+            "client_secret_basic"](self).construct(
+                {}, request_args=request_args, user=urllib.quote(userid),
+                password="hemligt")
+
+        return self.do_authorization_request(request_args=request_args,
+                                             http_args=http_args)
 
     def acquire_access_token(self, aresp, token_type, userid=""):
         """

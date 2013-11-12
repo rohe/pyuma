@@ -1,17 +1,19 @@
 import logging
 import socket
 from urlparse import parse_qs
-from beaker.middleware import SessionMiddleware
-from beaker.session import Session
+
 from cherrypy import wsgiserver
+from mako.lookup import TemplateLookup
 from oic.utils.authn.authn_context import AuthnBroker
 from oic.utils.authn.authn_context import PASSWORD
-from oic.utils.authn.authn_context import UNSPECIFIED
 from oic.utils.authn.client import verify_client
 from oic.utils.authn.user import UserAuthnMethod
 from oic.utils.authn.user import BasicAuthn
 from oic.utils.authz import Implicit
 from oic.utils.http_util import Response
+from oic.utils.http_util import CookieDealer
+from oic.utils.http_util import Unauthorized
+from oic.utils.http_util import BadRequest
 from oic.utils.http_util import NotFound
 from oic.utils.sdb import SessionDB
 from oic.utils.userinfo import UserInfo
@@ -38,12 +40,15 @@ CDB = {}
 PORT = 8088
 BASE = "http://localhost:8088"
 AUTHZSRV = None
+COOKIE_NAME = "uma_as"
 KEYS = {
     "RSA": {
         "key": "as.key",
         "usage": ["enc", "sig"]
     }
 }
+
+CookieHandler = CookieDealer(None)
 
 
 def get_body(environ):
@@ -92,6 +97,109 @@ def static(environ, session, path):
         resp = NotFound()
 
     return resp
+
+# ........................................................................
+
+ROOT = './'
+LOOKUP = TemplateLookup(directories=[ROOT + 'templates', ROOT + 'htdocs'],
+                        module_directory=ROOT + 'modules',
+                        input_encoding='utf-8', output_encoding='utf-8')
+
+
+def chose_permissions(environ, session):
+    try:
+        _user = session["user"]
+    except KeyError:
+        return authenticate(environ, session, "chose_permissions")
+
+    rs_list = AUTHZSRV.resource_sets_by_user(_user)
+
+    if len(rs_list) == 1:
+        cval = {"user": _user, "authn": PASSWORD}
+        headers = [CookieHandler.create_cookie("%s" % (cval,), "sso",
+                                               COOKIE_NAME)]
+        resp = Response(mako_template="permissions.mako",
+                        template_lookup=LOOKUP,
+                        headers=headers)
+
+        rs = rs_list[0]
+        argv = {
+            "rsname": rs["name"],
+            "scopes": rs["scopes"],
+            "checked": {},
+            "action": "permreg",
+            "entity_id": SPS[0][1],
+            "method": "get",
+            #"user": _user
+        }
+
+        return resp, argv
+    else:
+        # have to chose resource set first
+        pass
+
+
+def set_permission(environ, session):
+    query = parse_qs(environ["QUERY_STRING"])
+    try:
+        _user = query["user"][0]
+    except KeyError:
+        try:
+            _user = session["user"]
+        except KeyError:
+            try:
+                authn_info = environ["HTTP_AUTHORIZATION"]
+                ident = BasicAuthn(AUTHZSRV, PASSWD).authenticated_as(
+                    authorization=authn_info)
+                _user = ident["uid"]
+            except KeyError:
+                return authenticate(environ, session, "set_permission")
+
+    AUTHZSRV.store_permission(_user, query["sp_entity_id"][0],
+                              query["rsname"][0], query["perm"])
+    return Response("Succeeded"), {}
+
+
+def authenticate(environ, session, operation):
+    resp = Response(mako_template="login.mako",
+                    template_lookup=LOOKUP,
+                    headers=[])
+
+    argv = {
+        "action": "authn",
+        "operation": operation,
+        "login": "",
+        "password": ""
+    }
+    return resp, argv
+
+
+def authn(environ, session):
+
+    # verify the username+password
+    if environ["REQUEST_METHOD"] == "POST":
+        query = parse_qs(get_body(environ))
+    else:  # Assume environ["REQUEST_METHOD"] == "GET"
+        query = parse_qs(environ["QUERY_STRING"])
+
+    try:
+        assert PASSWD[query["login"][0]] == query["password"][0]
+    except (KeyError, AssertionError):
+        return Unauthorized(), {}
+
+    session["user"] = query["login"][0]
+    try:
+        op = query["operation"][0]
+        if op == "chose_permissions":
+            return chose_permissions(environ, session)
+        elif op == "set_permission":
+            return set_permission(environ, session)
+        else:
+            return BadRequest("Unknown function")
+    except KeyError:
+        pass
+
+    return Response(), {}
 
 # ........................................................................
 
@@ -188,8 +296,12 @@ def rpt(environ, session, query):
 
 #noinspection PyUnusedLocal
 def oidc_authorization_request(environ, session, query):
+    try:
+        authn_info = environ["HTTP_AUTHORIZATION"]
+    except KeyError:
+        authn_info = ""
     request = environ["QUERY_STRING"]
-    return AUTHZSRV.authorization_endpoint(request)
+    return AUTHZSRV.authorization_endpoint(request, authn=authn_info)
 
 
 #noinspection PyUnusedLocal
@@ -224,22 +336,37 @@ ENDPOINT2CB = {
 
 
 def application(environ, start_response):
-    session = Session(environ['beaker.session'])
-
     path = environ.get('PATH_INFO', '').lstrip('/')
-    resp = None
+
+    session = {}
+    try:
+        cookie = environ["HTTP_COOKIE"]
+        _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
+        if _tmp:
+            # 3-tuple (val, timestamp, type)
+            session = eval(_tmp[0])
+    except KeyError:
+        pass
+
+    argv = {}
     if path == "robots.txt":
         resp = static(environ, session, "static/robots.txt")
     elif path.startswith("static/"):
         resp = static(environ, session, path)
-
-    if not resp:
+    elif path == "permission":
+        resp, argv = chose_permissions(environ, session)
+    elif path == "permreg":
+        resp, argv = set_permission(environ, session)
+    elif path == "authn":
+        resp, argv = authn(environ, session)
+    else:
         query = parse_qs(environ["QUERY_STRING"])
         prepath = path.split("/")[0]
         if path in [".well-known/openid-configuration",
                     ".well-known/uma-configuration"]:
             resp = provider_configuration(environ, session)
         else:
+            resp = None
             for service in AUTHZSRV.services():
                 if prepath == service:
                     try:
@@ -253,7 +380,7 @@ def application(environ, start_response):
     else:
         resp = NotImplemented(path)
 
-    return resp(environ, start_response)
+    return resp(environ, start_response, **argv)
 
 # -----------------------------------------------------------------------------
 
@@ -280,7 +407,8 @@ AS_CONF = {
 }
 
 PASSWD = {
-    "linda": "krall",
+    "linda.lindgren@example.com": "krall",
+    "hans.granberg@example.org": "thetake",
     "user": "howes",
     "https://sp.example.org/": "code"
 }
@@ -304,19 +432,83 @@ USERDB = {
 
 USERINFO = UserInfo(USERDB)
 
-if __name__ == '__main__':
-    session_opts = {
-        'session.type': 'memory',
-        'session.cookie_expires': True,
-        #'session.data_dir': './data',
-        'session.auto': True,
-        'session.timeout': 900
-    }
+from saml2 import saml
+from saml2 import md
+from saml2.extension import dri
+from saml2.extension import idpdisc
+from saml2.extension import mdattr
+from saml2.extension import mdrpi
+from saml2.extension import mdui
+from saml2.extension import shibmd
+from saml2.extension import ui
+import xmldsig
+import xmlenc
 
+from saml2.mdstore import MetaDataFile
+
+ONTS = {
+    saml.NAMESPACE: saml,
+    mdui.NAMESPACE: mdui,
+    mdattr.NAMESPACE: mdattr,
+    mdrpi.NAMESPACE: mdrpi,
+    dri.NAMESPACE: dri,
+    ui.NAMESPACE: ui,
+    idpdisc.NAMESPACE: idpdisc,
+    md.NAMESPACE: md,
+    xmldsig.NAMESPACE: xmldsig,
+    xmlenc.NAMESPACE: xmlenc,
+    shibmd.NAMESPACE: shibmd
+}
+
+
+def get_sp(item):
+    metad = MetaDataFile(ONTS.values(), item, item)
+    metad.load()
+    sps = []
+    for entid, item in metad.entity.items():
+        if "spsso_descriptor" in item:
+            for sp in item["spsso_descriptor"]:
+                _name = ""
+                try:
+                    for ee in sp["extensions"]["extension_elements"]:
+                        if ee["__class__"] == "%s&UIInfo" % mdui.NAMESPACE:
+                            _name = ee["description"][0]["text"]
+                except KeyError:
+                    pass
+                if not _name:
+                    try:
+                        _name = item["organization"][
+                            "organization_display_name"][0]["text"]
+                    except KeyError:
+                        try:
+                            _name = item["organization"][
+                                "organization_name"][0]["text"]
+                        except KeyError:
+                            try:
+                                _name = item["organization"][
+                                    "organization_url"][0]["text"]
+                            except KeyError:
+                                pass
+                sps.append((_name, entid))
+    return sps
+
+
+class BasicAuthnExtra(BasicAuthn):
+    def __init__(self, srv, symkey):
+        BasicAuthn.__init__(self, srv, None, 0)
+        self.symkey = symkey
+
+    def verify_password(self, user, password):
+        assert password == "hemligt"
+
+
+if __name__ == '__main__':
+    SPS = get_sp("./sp/sp.xml")
     # The UMA AS
     AB = AuthnBroker()
-    AB.add(UNSPECIFIED, DummyAuthn(None, "linda.lindgren@example.com"))
-    AB.add(PASSWORD, BasicAuthn(None, PASSWD), 10,
+    AB.add("linda", DummyAuthn(None, "linda.lindgren@example.com"))
+    AB.add("hans", DummyAuthn(None, "hans.granberg@example.org"))
+    AB.add(PASSWORD, BasicAuthnExtra(None, PASSWD), 10,
            "http://%s" % socket.gethostname())
 
     AUTHZSRV = authzsrv.OIDCUmaAS(BASE, SessionDB(), CDB, AB, USERINFO, AUTHZ,
@@ -324,11 +516,10 @@ if __name__ == '__main__':
                                   configuration=AS_CONF,
                                   base_url=BASE)
 
+    CookieHandler.init_srv(AUTHZSRV)
     init_keyjar(AUTHZSRV, KEYS, "static/jwk_as.json")
 
-    SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT),
-                                        SessionMiddleware(application,
-                                                          session_opts))
+    SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 
     #if BASE.startswith("https"):
     #    from cherrypy.wsgiserver import ssl_pyopenssl

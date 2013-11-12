@@ -5,7 +5,8 @@ import sys
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 
 from oic.utils.http_util import Response
-from oic.oauth2 import rndstr, PBase
+from oic.oauth2 import rndstr
+from oic.oauth2 import PBase
 from oic.oauth2.message import ErrorResponse
 
 from oic.oic.message import AuthorizationResponse
@@ -130,7 +131,7 @@ class OpenIDConnect(object):
         return client
 
     #noinspection PyUnusedLocal
-    def begin(self, environ, start_response, session, key):
+    def begin(self, environ, start_response, session, key, acr_value=""):
         """Step 1: Get a access grant.
 
         :param environ:
@@ -159,6 +160,8 @@ class OpenIDConnect(object):
                 "scope": self.scope,
                 "state": client.state,
             }
+            if acr_value:
+                request_args["acr_values"] = acr_value
 
             if self.flow_type == "token":
                 request_args["nonce"] = rndstr(16)

@@ -1,36 +1,38 @@
 import base64
 import copy
 import hashlib
+import json
 import re
 import sys
 import logging
 import traceback
 import urllib
+import requests
 
 from urlparse import parse_qs
 from cherrypy import wsgiserver
 
-from beaker.middleware import SessionMiddleware
-from beaker.session import Session
 from mako.lookup import TemplateLookup
-from oic.oauth2.message import AuthorizationResponse, MissingRequiredAttribute
-from oic.oauth2.message import MissingRequiredValue
-from uma.saml2uma import ErrorResponse
-from uma.saml2uma import ResourceResponse
 
-from oic.utils.http_util import Response, Forbidden
+from oic.oauth2.message import AuthorizationResponse
+from oic.oauth2.message import MissingRequiredAttribute
+from oic.utils.http_util import Response, Forbidden, CookieDealer
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import NotFound
 from oic.utils.http_util import ServiceError
 from oic.utils.userinfo import UserInfo
-import requests
-from uma import init_keyjar
-from uma.message import ResourceSetDescription, PermissionRegistrationResponse
 
+from uma import init_keyjar
+from uma.client import UMA_SCOPE
+from uma.message import ResourceSetDescription
+from uma.message import PermissionRegistrationResponse
 from uma.resourcesrv import ResourceServer
 from uma.resourcesrv import DESC_BASE
-from uma.client import UMA_SCOPE
+from uma.resourcesrv import Unknown
+from uma.saml2uma import ErrorResponse
+from uma.saml2uma import ResourceResponse
+from uma.resourcesrv import UnknownAuthzSrv
 
 __author__ = 'rolandh'
 
@@ -60,6 +62,8 @@ KEYS = {
 
 RES_SRV = None
 RP = None
+CookieHandler = CookieDealer(None)
+COOKIE_NAME = "rs_uma"
 
 
 def get_body(environ):
@@ -136,6 +140,7 @@ USERDB = {
         "givenName": "Linda",
         "sn": "Lindgren",
         "email": "linda@example.com",
+        "uid": "linda"
     }
 }
 
@@ -226,7 +231,14 @@ RESOURCE_PATTERN = "info/%s"
 
 
 def application(environ, start_response):
-    session = Session(environ['beaker.session'])
+    session = {}
+    try:
+        cookie = environ["HTTP_COOKIE"]
+        _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
+        if _tmp:
+            session = eval(_tmp[0])
+    except KeyError:
+        pass
 
     path = environ.get('PATH_INFO', '').lstrip('/')
     if path == "robots.txt":
@@ -240,7 +252,7 @@ def application(environ, start_response):
         query = None
 
     if path == "rp":
-        link = ""
+        link = acr = ""
         if "uid" in query:
             try:
                 link = RES_SRV.find_srv_discovery_url(resource=query["uid"][0])
@@ -250,6 +262,9 @@ def application(environ, start_response):
         elif "url" in query:
             link = query["url"][0]
 
+        if "acr" in query:
+            acr = query["acr"][0]
+
         if link:
             RES_SRV.srv_discovery_url = link
             md5 = hashlib.md5()
@@ -257,7 +272,8 @@ def application(environ, start_response):
             opkey = base64.b16encode(md5.digest())
             session["callback"] = True
             func = getattr(RES_SRV, "begin")
-            return func(environ, start_response, session, opkey)
+            return func(environ, start_response, session, opkey,
+                        acr_value=acr)
         else:
             resp = BadRequest()
             return resp(environ, start_response)
@@ -267,7 +283,18 @@ def application(environ, start_response):
         # info/<uid>[?attr=<attribute>[&attr=<attribute>]]
         owner = path[5:]
         owner = owner.replace("--", "@")
-        res = RES_SRV.dataset_endpoint(query, owner, environ)
+        try:
+            res = RES_SRV.dataset_endpoint(query, owner, environ)
+        except Unknown:
+            resp = BadRequest("Unknown user: %s" % owner)
+            return resp(environ, start_response)
+        except UnknownAuthzSrv:
+            resp = BadRequest("User have not registered an authz server")
+            return resp(environ, start_response)
+        except KeyError, err:
+            resp = BadRequest("Missing info: %s" % err)
+            return resp(environ, start_response)
+
         # either a ErrorResponse or a ResourceResponse
 
         er = ErrorResponse().from_json(res)
@@ -300,8 +327,9 @@ def application(environ, start_response):
         aresp = AuthorizationResponse().from_urlencoded(environ["QUERY_STRING"])
         _cli = RES_SRV.oic_client[path]
         uid = _cli.acquire_access_token(aresp, "PAT")
+        session["userid"] = uid
 
-        # The RS registering Alice resources
+        # The RS registering Alice's resources
         RES_SRV.authz_registration(uid, _cli.token[uid]["PAT"],
                                    _cli.provider_info.keys()[0],
                                    path)
@@ -312,10 +340,13 @@ def application(environ, start_response):
         #                                  behavior="use_authorization_header",
         #                                  token_type=_pat["token_type"])
         # build resource_set_description
-        desc = build_description(uid, RES_SRV.dataset(uid))
+        user_info = RES_SRV.dataset(uid)
+        _hash = hashlib.sha224(json.dumps(user_info)).hexdigest()
+        desc = build_description(uid, user_info)
 
         try:
-            RES_SRV.register_resource_set_description(uid, desc.to_json(), uid)
+            RES_SRV.register_resource_set_description(uid, desc.to_json(), uid,
+                                                      _hash)
         except Exception, err:
             raise
 
@@ -398,14 +429,6 @@ class IdmUserInfo(UserInfo):
             return {}
 
 if __name__ == '__main__':
-    session_opts = {
-        'session.type': 'memory',
-        'session.cookie_expires': True,
-        #'session.data_dir': './data',
-        'session.auto': True,
-        'session.timeout': 900
-    }
-
     #parser = argparse.ArgumentParser()
     #parser.add_argument(dest="config")
     #args = parser.parse_args()
@@ -415,10 +438,8 @@ if __name__ == '__main__':
     # The UMA RS
     RES_SRV = ResourceServer(IdmUserInfo(USERDB), CONFIG, baseurl=HOST)
     init_keyjar(RES_SRV, KEYS, "static/jwk_rs.json")
-
-    SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT),
-                                        SessionMiddleware(application,
-                                                          session_opts))
+    CookieHandler.init_srv(RES_SRV)
+    SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 
     #if BASE.startswith("https"):
     #    from cherrypy.wsgiserver import ssl_pyopenssl

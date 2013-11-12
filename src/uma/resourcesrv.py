@@ -1,3 +1,4 @@
+import logging
 from urllib import urlencode
 from oic.oauth2 import Client
 from oic.oauth2 import rndstr
@@ -13,7 +14,17 @@ from uma.oidc import OpenIDConnect
 from uma.saml2uma import ErrorResponse
 from uma.saml2uma import ResourceResponse
 
+logger = logging.getLogger(__name__)
+
 __author__ = 'rolandh'
+
+
+class Unknown(Exception):
+    pass
+
+
+class UnknownAuthzSrv(Exception):
+    pass
 
 
 def client_init(ca_certs, client_authn_method, config):
@@ -44,7 +55,13 @@ class PermissionRegistry(object):
             self.db[owner] = {key: value}
 
     def get(self, owner, item):
-        return self.db[owner][item]
+        try:
+            return self.db[owner][item]
+        except KeyError:
+            if owner not in self.db:
+                raise Unknown(owner)
+            else:
+                raise
 
     def add_resource_set_description(self, owner, item):
         try:
@@ -92,15 +109,17 @@ class DataSetEndpoint(Endpoint):
 
 class ResourceServer(OpenIDConnect):
     def __init__(self, dataset, config=None, config_file="",
-                 baseuri="", **kwargs):
+                 baseuri="", symkey="", **kwargs):
         OpenIDConnect.__init__(self, config, config_file, **kwargs)
         self.dataset = dataset
+        self.symkey = symkey
         self.permreg = PermissionRegistry()
         self.request2endpoint = REQUEST2ENDPOINT
 
         self.endpoints = [DataSetEndpoint]
         self.server_environ = {}
         self.path2rsid = {}
+        self.userinfo_hash = {}
 
     @staticmethod
     def _get_bearer_token(environ):
@@ -132,7 +151,11 @@ class ResourceServer(OpenIDConnect):
         rpt = self._get_bearer_token(environ)
         if not rpt:  # No RPT
             # return information about the AS
-            _as = self.permreg.get(owner, "authzsrv")
+            try:
+                _as = self.permreg.get(owner, "authzsrv")
+            except Unknown:
+                raise UnknownAuthzSrv(owner)
+
             return ErrorResponse(as_uri=_as, error="Missing RPT",
                                  host_id="rs.example.com").to_json()
         else:
@@ -181,7 +204,7 @@ class ResourceServer(OpenIDConnect):
 
         :param owner: The owner of the resource
         :param rpt: Resource access token
-        :param rsid: Resource identifier
+        :param path: path representing the resource
         :returns:
         """
 
@@ -204,9 +227,12 @@ class ResourceServer(OpenIDConnect):
 
     def _register(self, owner, method, endp, objekt=None, message=None,
                   rsid="", resp_cls=None):
-        pat = self.permreg.get(owner, "pat")["access_token"]
-        client = self.oic_client[self.permreg.get(owner, "client_key")]
-        azs = self.permreg.get(owner, "authzsrv")
+        try:
+            pat = self.permreg.get(owner, "pat")["access_token"]
+            client = self.oic_client[self.permreg.get(owner, "client_key")]
+            azs = self.permreg.get(owner, "authzsrv")
+        except Exception, err:
+            raise Unknown(owner)
 
         request_args = {"access_token": pat}
         if message:
@@ -251,7 +277,7 @@ class ResourceServer(OpenIDConnect):
                               resp_cls=PermissionRegistrationResponse )
 
     def register_resource_set_description(self, owner, resource_set_descr,
-                                          path):
+                                          path, hashval):
         """
         Registers a resource set description at the Authorization server
 
@@ -259,9 +285,11 @@ class ResourceServer(OpenIDConnect):
         :param resource_set_descr: Resource Set Description in a JSON
             format
         :param path: HTTP path at which the resource should be accessible
+        :param hashval: A hash value constructed over the user info
         :returns: A StatusResponse instance
         """
 
+        self.userinfo_hash[owner] = hash
         rsid = rndstr()
         response = self._register(owner, "PUT",
                                   endp="resource_set_endpoint",
