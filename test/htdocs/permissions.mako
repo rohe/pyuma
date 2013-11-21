@@ -4,7 +4,8 @@
 
 import urllib
 
-def create_choice_tree(scopes, checked, action, entity_id, method, user, rsname):
+def create_choice_tree(scopes, checked, action, entity_id, method, rsname,
+                       user=""):
     """
     Creates a tree of scope choices
     """
@@ -15,7 +16,8 @@ def create_choice_tree(scopes, checked, action, entity_id, method, user, rsname)
 
     element = "<form action=\"%s\" method=\"%s\">" % (action, method)
     element += "<input type=\"hidden\" name=\"sp_entity_id\" value=\"%s\"/>" % entity_id
-    element += "<input type=\"hidden\" name=\"user\" value=\"%s\"/>" % user
+    if user:
+        element += "<input type=\"hidden\" name=\"user\" value=\"%s\"/>" % user
     element += "<input type=\"hidden\" name=\"rsname\" value=\"%s\"/>" % rsname
     element += "<table border=\"1\" border_color=\"black\">"
     scopes.sort()
@@ -92,8 +94,8 @@ def create_choice_tree(scopes, checked, action, entity_id, method, user, rsname)
     <div class="container">
      <!-- Main component for a primary marketing message or call to action -->
       <div class="jumbotron">
-        <h2>Chose the permissions: </h2>
-        ${create_choice_tree(scopes, checked, action, entity_id, method, user, rsname)}
+        <h2>Chose which attributes or attribute values you want to release: </h2>
+        ${create_choice_tree(scopes, checked, action, entity_id, method, rsname, user)}
       </div>
 
     </div> <!-- /container -->

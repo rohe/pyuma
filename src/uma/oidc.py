@@ -161,7 +161,7 @@ class OpenIDConnect(object):
                 "state": client.state,
             }
             if acr_value:
-                request_args["acr_values"] = acr_value
+                request_args["acr_values"] = [acr_value]
 
             if self.flow_type == "token":
                 request_args["nonce"] = rndstr(16)
@@ -341,5 +341,9 @@ class OpenIDConnect(object):
         :return:
         """
 
-        wf = WebFinger(httpd=PBase(ca_certs=self.extra["ca_bundle"]))
+        try:
+            args = {"ca_certs": self.extra["ca_bundle"]}
+        except KeyError:
+            args = {}
+        wf = WebFinger(httpd=PBase(**args))
         return wf.discovery_query(resource)

@@ -1,54 +1,38 @@
+#!/usr/bin/env python
+import json
 import logging
-import socket
 from urlparse import parse_qs
 
 from cherrypy import wsgiserver
-from mako.lookup import TemplateLookup
-from oic.utils.authn.authn_context import AuthnBroker
+from oic.oic.message import idtoken_deser, IdToken
 from oic.utils.authn.authn_context import PASSWORD
-from oic.utils.authn.client import verify_client
-from oic.utils.authn.user import UserAuthnMethod
 from oic.utils.authn.user import BasicAuthn
-from oic.utils.authz import Implicit
-from oic.utils.http_util import Response
+from oic.utils.http_util import Response, InvalidCookieSign
 from oic.utils.http_util import CookieDealer
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import NotFound
-from oic.utils.sdb import SessionDB
-from oic.utils.userinfo import UserInfo
+from oic.utils.webfinger import WebFinger, OIC_ISSUER
+from uma.resource_set import UnknownObject
 
-from uma import authzsrv
-from uma import init_keyjar
+import uma_as
 
 __author__ = 'rolandh'
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("")
+LOGFILE_NAME = 'uma_as.log'
+hdlr = logging.FileHandler(LOGFILE_NAME)
+base_formatter = logging.Formatter(
+    "%(asctime)s %(name)s:%(levelname)s %(message)s")
+hdlr.setFormatter(base_formatter)
+logger.addHandler(hdlr)
+logger.setLevel(logging.DEBUG)
 
 
-class DummyAuthn(UserAuthnMethod):
-    def __init__(self, srv, uid="Linda"):
-        UserAuthnMethod.__init__(self, srv)
-        self.user = uid
-
-    def authenticated_as(self, cookie=None, **kwargs):
-        return {"uid": self.user}
-
-
-AUTHZ = Implicit("PERMISSION")
-CDB = {}
 PORT = 8088
-BASE = "http://localhost:8088"
-AUTHZSRV = None
-COOKIE_NAME = "uma_as"
-KEYS = {
-    "RSA": {
-        "key": "as.key",
-        "usage": ["enc", "sig"]
-    }
-}
-
+BASE = "https://localhost:%s" % PORT
 CookieHandler = CookieDealer(None)
+COOKIE_NAME = "as_uma"
 
 
 def get_body(environ):
@@ -100,10 +84,29 @@ def static(environ, session, path):
 
 # ........................................................................
 
-ROOT = './'
-LOOKUP = TemplateLookup(directories=[ROOT + 'templates', ROOT + 'htdocs'],
-                        module_directory=ROOT + 'modules',
-                        input_encoding='utf-8', output_encoding='utf-8')
+
+def edit_permission_form(uid, resource_name, scopes, entity_id, checked=None):
+    cval = {"user": uid, "authn": PASSWORD}
+    headers = [CookieHandler.create_cookie("%s" % (cval,), "sso", COOKIE_NAME)]
+
+    resp = Response(mako_template="permissions.mako",
+                    template_lookup=uma_as.LOOKUP,
+                    headers=headers)
+    if checked is None:
+        checked = {}
+
+    # create_choice_tree(scopes, checked, action, entity_id, method, user,
+    #     rsname)
+    argv = {
+        "rsname": resource_name,
+        "scopes": scopes,
+        "checked": checked,
+        "action": "permreg",
+        "entity_id": entity_id,
+        "method": "get",
+    }
+
+    return resp, argv
 
 
 def chose_permissions(environ, session):
@@ -115,25 +118,8 @@ def chose_permissions(environ, session):
     rs_list = AUTHZSRV.resource_sets_by_user(_user)
 
     if len(rs_list) == 1:
-        cval = {"user": _user, "authn": PASSWORD}
-        headers = [CookieHandler.create_cookie("%s" % (cval,), "sso",
-                                               COOKIE_NAME)]
-        resp = Response(mako_template="permissions.mako",
-                        template_lookup=LOOKUP,
-                        headers=headers)
-
         rs = rs_list[0]
-        argv = {
-            "rsname": rs["name"],
-            "scopes": rs["scopes"],
-            "checked": {},
-            "action": "permreg",
-            "entity_id": SPS[0][1],
-            "method": "get",
-            #"user": _user
-        }
-
-        return resp, argv
+        return edit_permission_form(_user, rs["name"], rs["scopes"], SPS[0][1])
     else:
         # have to chose resource set first
         pass
@@ -149,7 +135,7 @@ def set_permission(environ, session):
         except KeyError:
             try:
                 authn_info = environ["HTTP_AUTHORIZATION"]
-                ident = BasicAuthn(AUTHZSRV, PASSWD).authenticated_as(
+                ident = BasicAuthn(AUTHZSRV, uma_as.PASSWD).authenticated_as(
                     authorization=authn_info)
                 _user = ident["uid"]
             except KeyError:
@@ -162,7 +148,7 @@ def set_permission(environ, session):
 
 def authenticate(environ, session, operation):
     resp = Response(mako_template="login.mako",
-                    template_lookup=LOOKUP,
+                    template_lookup=uma_as.LOOKUP,
                     headers=[])
 
     argv = {
@@ -171,7 +157,17 @@ def authenticate(environ, session, operation):
         "login": "",
         "password": ""
     }
+
     return resp, argv
+
+
+def verify(environ):
+    if environ["REQUEST_METHOD"] == "POST":
+        query = get_body(environ)
+    else:  # Assume environ["REQUEST_METHOD"] == "GET"
+        query = environ["QUERY_STRING"]
+    resp = AUTHZSRV.verify_endpoint(query)
+    return resp, {}
 
 
 def authn(environ, session):
@@ -183,19 +179,25 @@ def authn(environ, session):
         query = parse_qs(environ["QUERY_STRING"])
 
     try:
-        assert PASSWD[query["login"][0]] == query["password"][0]
+        assert uma_as.PASSWD[query["login"][0]] == query["password"][0]
     except (KeyError, AssertionError):
         return Unauthorized(), {}
 
-    session["user"] = query["login"][0]
+    uid = uma_as.UID2EPPN[query["login"][0]]
+    cval = {"user": uid, "authn": PASSWORD}
+    headers = [CookieHandler.create_cookie("%s" % (cval,), "sso", COOKIE_NAME)]
+
+    session["user"] = uid
     try:
         op = query["operation"][0]
         if op == "chose_permissions":
             return chose_permissions(environ, session)
         elif op == "set_permission":
             return set_permission(environ, session)
+        elif op == "manage":
+            return manage(uid, headers)
         else:
-            return BadRequest("Unknown function")
+            pass
     except KeyError:
         pass
 
@@ -222,8 +224,14 @@ def token(environ, session, query):
         authn_info = ""
     if not query:
         query = get_body(environ)
-    return AUTHZSRV.token_endpoint(auth_header=authn_info,
+    resp = AUTHZSRV.token_endpoint(auth_header=authn_info,
                                    request=query)
+    #if resp.status == "200 OK":
+    #    _dict = json.loads(resp.message)
+    #    _idt = IdToken().from_jwt(str(_dict["id_token"]),
+    #                              keyjar=AUTHZSRV.keyjar)
+    #    uid = _idt["sub"]
+    return resp
 
 
 #noinspection PyUnusedLocal
@@ -294,6 +302,26 @@ def rpt(environ, session, query):
     return AUTHZSRV.rpt_endpoint(authn_info)
 
 
+def replace_cookie_in_header(resp):
+    if resp.headers:
+        _header = []
+        for header in resp.headers:
+            key, val = header
+            if key == "Set-Cookie":
+                try:
+                    # Unpack the header
+                    (uid, _, typ) = CookieHandler.get_cookie_value(val,
+                                                                   "pyoidc")
+                    if typ == "sso":
+                        uid = uma_as.UID2EPPN[uid]
+                        _tup = CookieHandler.create_cookie(uid, "sso", "pyoidc")
+                        val = _tup[1]
+                except InvalidCookieSign:
+                    pass
+            _header.append((key, val))
+        resp.headers = _header
+
+
 #noinspection PyUnusedLocal
 def oidc_authorization_request(environ, session, query):
     try:
@@ -301,7 +329,14 @@ def oidc_authorization_request(environ, session, query):
     except KeyError:
         authn_info = ""
     request = environ["QUERY_STRING"]
-    return AUTHZSRV.authorization_endpoint(request, authn=authn_info)
+    try:
+        _kaka = environ["HTTP_COOKIE"]
+    except KeyError:
+        _kaka = None
+    resp = AUTHZSRV.authorization_endpoint(request, cookie=_kaka,
+                                           authn=authn_info)
+    #replace_cookie_in_header(resp)
+    return resp
 
 
 #noinspection PyUnusedLocal
@@ -316,8 +351,66 @@ def authorization_request(environ, session, query):
 
 
 #noinspection PyUnusedLocal
-def provider_configuration(environ, session):
+def openid_provider_configuration(environ, session):
     return AUTHZSRV.providerinfo_endpoint()
+
+
+#noinspection PyUnusedLocal
+def uma_provider_configuration(environ, session):
+    return AUTHZSRV.uma_providerinfo_endpoint()
+
+
+#noinspection PyUnusedLocal
+def resource_set(uid):
+    res_set = AUTHZSRV.resource_sets_by_user(uid)
+    # returns list of ResourceSetDescription instances
+    _result = [{"name": r["name"],
+                "id": AUTHZSRV.map_id_rsid[r["_id"]]} for r in res_set]
+    resp = Response(json.dumps(_result))
+    return resp, {}
+
+
+#noinspection PyUnusedLocal
+def permits(uid):
+    _result = AUTHZSRV.permits_by_user(uid)
+    # returns a dictionary with requestors as keys and list of resource_ids
+    # as values
+    resp = Response(json.dumps(_result))
+    return resp, {}
+
+
+def webfinger(environ):
+    query = parse_qs(environ["QUERY_STRING"])
+    try:
+        assert query["rel"] == [OIC_ISSUER]
+        resource = query["resource"][0]
+    except KeyError:
+        resp = BadRequest("Missing parameter in request")
+    else:
+        wf = WebFinger()
+        resp = Response(wf.response(subject=resource, base=AUTHZSRV.baseurl))
+    return resp
+
+
+def manage(uid, headers=None):
+    if headers is None:
+        headers = []
+
+    resp = Response(mako_template="manage.mako", template_lookup=uma_as.LOOKUP,
+                    headers=headers)
+
+    res_set = AUTHZSRV.resource_sets_by_user(uid)
+    # returns list of ResourceSetDescription instances
+    rs_list = [(r["name"], AUTHZSRV.map_id_rsid[r["_id"]]) for r in res_set]
+
+    argv = {
+        "action": "action",
+        "method": "POST",
+        "rs_list": rs_list,
+        "req_list": SPS,
+        "user": uid
+    }
+    return resp, argv
 
 
 ENDPOINT2CB = {
@@ -341,30 +434,88 @@ def application(environ, start_response):
     session = {}
     try:
         cookie = environ["HTTP_COOKIE"]
-        _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
+        try:
+            _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
+        except InvalidCookieSign:
+            _tmp = None
         if _tmp:
             # 3-tuple (val, timestamp, type)
             session = eval(_tmp[0])
+        else:
+            try:
+                (uid, _, typ) = CookieHandler.get_cookie_value(cookie, "pyoidc")
+                if typ == "sso":
+                    session = {"user": uid}
+            except InvalidCookieSign:
+                pass
     except KeyError:
         pass
 
     argv = {}
+    resp = None
+
+    logger.info("PATH: %s" % path)
+    logger.info("Session: %s" % (session,))
+
     if path == "robots.txt":
         resp = static(environ, session, "static/robots.txt")
     elif path.startswith("static/"):
         resp = static(environ, session, path)
     elif path == "permission":
         resp, argv = chose_permissions(environ, session)
-    elif path == "permreg":
+    elif path == "permreg" or path == "manage/permreg":
         resp, argv = set_permission(environ, session)
+    elif path == "verify":
+        resp, argv = verify(environ)
     elif path == "authn":
         resp, argv = authn(environ, session)
+    elif path.startswith("resset/"):
+        uid = path.split("/")[1]
+        resp, argv = resource_set(uid)
+    elif path.startswith("permits/"):
+        uid = path.split("/")[1]
+        resp, argv = permits(uid)
+    elif path == "action" or path == "manage/action":
+        query = parse_qs(get_body(environ))
+        logger.debug("%s: %s" % (path, query))
+        if query["commit"] == ["add"]:
+            try:
+                rsd = AUTHZSRV.resource_set.read(
+                    AUTHZSRV.map_rsid_id[query["resource"][0]])
+            except UnknownObject:
+                resp = BadRequest("Unknown object")
+            except Exception, err:
+                raise
+            else:
+                resp, argv = edit_permission_form(query["user"][0],
+                                                  rsd["name"],
+                                                  rsd["scopes"],
+                                                  query["requestor"][0])
+        elif query["commit"] == ["display"]:
+            resp, argv = set_permission(environ, session)
+        elif query["commit"] == ["modify"]:
+            resp, argv = set_permission(environ, session)
+        elif query["commit"] == ["delete"]:
+            resp, argv = set_permission(environ, session)
+
+    #elif path.startswith("manage/"):
+    #    uid = path.split("/")[1]
+    #    resp, argv = manage(uid)
+    elif path == "manage":
+        if not session or "user" not in session:
+            # demand authentication
+            resp, argv = authenticate(environ, session, "manage")
+        else:
+            resp, argv = manage(session["user"])
     else:
         query = parse_qs(environ["QUERY_STRING"])
         prepath = path.split("/")[0]
-        if path in [".well-known/openid-configuration",
-                    ".well-known/uma-configuration"]:
-            resp = provider_configuration(environ, session)
+        if path == ".well-known/openid-configuration":
+            resp = openid_provider_configuration(environ, session)
+        elif path == ".well-known/uma-configuration":
+            resp = uma_provider_configuration(environ, session)
+        elif path == ".well-known/webfinger":
+            resp = webfinger(environ)
         else:
             resp = None
             for service in AUTHZSRV.services():
@@ -384,53 +535,6 @@ def application(environ, start_response):
 
 # -----------------------------------------------------------------------------
 
-AS_CONF = {
-    "version": "1.0",
-    "issuer": BASE,
-    "pat_profiles_supported": ["bearer"],
-    "aat_profiles_supported": ["bearer"],
-    "rpt_profiles_supported": ["bearer"],
-    "pat_grant_types_supported": ["authorization_code"],
-    "aat_grant_types_supported": ["authorization_code"],
-    "claim_profiles_supported": ["openid"],
-    #"dynamic_client_endpoint": "%s/dynamic_client_endpoint" % BASE,
-    #"token_endpoint": "%s/token_endpoint" % BASE,
-    #"user_endpoint": "%s/user_endpoint" % BASE,
-    #"resource_set_registration_endpoint": "%s/rsr_endpoint" % BASE,
-    #"introspection_endpoint": "%s/introspection_endpoint" % BASE,
-    #"permission_registration_endpoint": "%s/pr_endpoint" % BASE,
-    #"rpt_endpoint": "%s/rpt_endpoint" % BASE,
-    #"authorization_request_endpoint": "%s/ar_endpoint" % BASE,
-    #"userinfo_endpoint": "%s/user_info_endpoint" % BASE
-    # ------------ The OIDC provider config -----------------------
-
-}
-
-PASSWD = {
-    "linda.lindgren@example.com": "krall",
-    "hans.granberg@example.org": "thetake",
-    "user": "howes",
-    "https://sp.example.org/": "code"
-}
-
-USERDB = {
-    "hans.granberg@example.org": {
-        "name": "Hans Granberg",
-        "nickname": "Hasse",
-        "email": "hans@example.org",
-        "verified": False,
-        "sub": "hans.granberg@example.org"
-    },
-    "linda.lindgren@example.com": {
-        "name": "Linda Lindgren",
-        "nickname": "Linda",
-        "email": "linda@example.com",
-        "verified": True,
-        "sub": "linda.lindgren@example.com"
-    }
-}
-
-USERINFO = UserInfo(USERDB)
 
 from saml2 import saml
 from saml2 import md
@@ -493,39 +597,22 @@ def get_sp(item):
     return sps
 
 
-class BasicAuthnExtra(BasicAuthn):
-    def __init__(self, srv, symkey):
-        BasicAuthn.__init__(self, srv, None, 0)
-        self.symkey = symkey
-
-    def verify_password(self, user, password):
-        assert password == "hemligt"
-
-
 if __name__ == '__main__':
+    SERVER_CERT = "pki/server.crt"
+    SERVER_KEY = "pki/server.key"
+    CA_BUNDLE = None
     SPS = get_sp("./sp/sp.xml")
+
     # The UMA AS
-    AB = AuthnBroker()
-    AB.add("linda", DummyAuthn(None, "linda.lindgren@example.com"))
-    AB.add("hans", DummyAuthn(None, "hans.granberg@example.org"))
-    AB.add(PASSWORD, BasicAuthnExtra(None, PASSWD), 10,
-           "http://%s" % socket.gethostname())
-
-    AUTHZSRV = authzsrv.OIDCUmaAS(BASE, SessionDB(), CDB, AB, USERINFO, AUTHZ,
-                                  verify_client, "1234567890", keyjar=None,
-                                  configuration=AS_CONF,
-                                  base_url=BASE)
-
-    CookieHandler.init_srv(AUTHZSRV)
-    init_keyjar(AUTHZSRV, KEYS, "static/jwk_as.json")
+    AUTHZSRV = uma_as.main(BASE, CookieHandler)
 
     SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 
-    #if BASE.startswith("https"):
-    #    from cherrypy.wsgiserver import ssl_pyopenssl
-    #
-    #    SRV.ssl_adapter = ssl_pyopenssl.pyOpenSSLAdapter(
-    #        SERVER_CERT, SERVER_KEY, CA_BUNDLE)
+    if BASE.startswith("https"):
+        from cherrypy.wsgiserver import ssl_pyopenssl
+
+        SRV.ssl_adapter = ssl_pyopenssl.pyOpenSSLAdapter(
+            SERVER_CERT, SERVER_KEY, CA_BUNDLE)
 
     #logger.info("RP server starting listening on port:%s" % rp_conf.PORT)
     print "AS started, listening on port:%s" % PORT

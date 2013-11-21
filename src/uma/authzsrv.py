@@ -23,7 +23,6 @@ from uma.message import IntrospectionRequest, AuthzDescription
 from uma.message import AuthorizationDataRequest
 from uma.client import UMA_SCOPE
 from uma.message import IntrospectionResponse
-from uma.message import OIDCProviderConfiguration
 from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
 from uma.message import RPTResponse
@@ -83,7 +82,7 @@ class DynamicClientEndpoint(Endpoint):
     etype = "dynamic_client"
 
 
-def cmp_scopes(permission, allow_scopes):
+def eval_scopes(permission, allow_scopes):
     _scopes = []
     
     for scope in permission["scopes"]:
@@ -94,7 +93,13 @@ def cmp_scopes(permission, allow_scopes):
                 if scope.startswith(asc):
                     _scopes.append(scope)
                     break
-                    
+
+    if not _scopes:  # Check if the the asked for is less specific
+        for asc in allow_scopes:
+            for scope in permission["scopes"]:
+                if asc.startswith(scope):
+                    _scopes.append(asc)
+
     return _scopes
 
 
@@ -194,6 +199,14 @@ class Permission(object):
     def get_permit(self, owner, requestor, resource_id):
         return self.db[owner]["permit"][requestor][resource_id]
 
+    def delete_permit(self, owner, requestor, resource_id):
+        del self.db[owner]["permit"][requestor][resource_id]
+
+    def delete_permit_by_resource_id(self, owner, resource_id):
+        for req, spec in self.db[owner]["permit"].items():
+            if resource_id in spec:
+                self.delete_permit(owner, req, resource_id)
+
     def get_permits(self, owner):
         """
         :param owner: The owner of the resource
@@ -288,7 +301,7 @@ class UmaAS(object):
             rsid = rsid[1:]
 
         _user = safe_name("%s:%s" % (owner, client_id))
-
+        logger.debug("handling resource set belonging to '%s'" % _user)
         self.resource_set.set_collection(_user)
         if method == "PUT":
             if if_match:  # Update
@@ -318,6 +331,8 @@ class UmaAS(object):
         else:
             return BadRequest("Message error")
 
+        logger.debug("operation: %s" % func)
+        logger.debug("operation args: %s" % (args,))
         try:
             body = func(**args)
         except MessageException:
@@ -331,6 +346,10 @@ class UmaAS(object):
                     self.map_user_id[owner].append(_id)
                 except KeyError:
                     self.map_user_id[owner] = [_id]
+            elif func == self.resource_set.delete:
+                # As a side effect all permissions assigned that references
+                # this resource set should be deleted
+                self.permit.delete_permit_by_resource_id(owner, rsid)
 
             response = Response(body.to_json(), content="application/json")
 
@@ -350,6 +369,14 @@ class UmaAS(object):
                 raise
 
         return res
+
+    def permits_by_user(self, owner):
+        """
+        :param owner: The owner of the resource
+        :return: A dictionary with requestors as keys and list of resource_ids
+            as values
+        """
+        return self.permit.get_permits(owner)
 
     def authz_session_info(self, token):
         pass
@@ -393,6 +420,7 @@ class UmaAS(object):
         This is a proposed permission waiting for the user to accept it
         """
         _ticket = rndstr(24)
+        logging.debug("Registring permission request: %s" % (request))
         self.temporary_perm[_ticket] = request
         resp = PermissionRegistrationResponse(ticket=_ticket)
         self.permit.add_request(owner, _ticket, request)
@@ -499,7 +527,7 @@ class UmaAS(object):
 
         allow_scopes = self.permit.get_permit(user, requestor,
                                               permission["resource_set_id"])
-        _scopes = cmp_scopes(permission, allow_scopes)
+        _scopes = eval_scopes(permission, allow_scopes)
 
         now = time.time()
         # resource_set_id should be gotten from the RPT
@@ -705,17 +733,17 @@ class OIDCUmaAS(OIDCProvider, UmaAS):
             return Unauthorized()
         return self.introspection_endpoint_(request, owner, **kwargs)
 
-    def create_providerinfo(self, pcr_class=OIDCProviderConfiguration):
-        _response = OIDCProvider.create_providerinfo(self, pcr_class)
-        _response.update(self.conf_info)
+    #def create_providerinfo(self):
+    #    _response = OIDCProvider.create_providerinfo(self, pcr_class)
+    #    _response.update(self.conf_info)
+    #
+    #    for endp in self.endp:
+    #        _response[endp(None).name] = "%s%s" % (self.baseurl, endp.etype)
+    #
+    #    logger.info("provider_info_response: %s" % (_response.to_dict(),))
+    #    return _response
 
-        for endp in self.endp:
-            _response[endp(None).name] = "%s%s" % (self.baseurl, endp.etype)
-
-        logger.info("provider_info_response: %s" % (_response.to_dict(),))
-        return _response
-
-    def providerinfo_endpoint(self, handle="", **kwargs):
+    def uma_providerinfo_endpoint(self, handle="", **kwargs):
         return self.providerinfo_endpoint_(handle, **kwargs)
 
     def resource_set_registration_endpoint(self, path, method, authn, body="",

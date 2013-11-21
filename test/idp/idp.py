@@ -299,8 +299,8 @@ class SSO(Service):
         #identity["eduPersonTargetedID"] = get_eptid(IDP, resp_args, session)
         logger.info("Identity: %s" % (identity,))
 
-        if REPOZE_ID_EQUIVALENT and self.user:
-            identity[REPOZE_ID_EQUIVALENT] = self.user
+#        if REPOZE_ID_EQUIVALENT and self.user:
+#            identity[REPOZE_ID_EQUIVALENT] = self.user
 
         try:
             authn=AUTHN_BROKER["1"]
@@ -334,7 +334,7 @@ class SSO(Service):
                                      "req_info": self.req_info,
                                      "binding_out": self.binding_out,
                                      "destination": self.destination}
-            user_resp = USERS("%s@%s" % (UID2EPPN[self.user],
+            user_resp = USERS("%s@%s" % (UIDMAP[self.user],
                                          resp_args["sp_entity_id"]),
                               state=_state)
 
@@ -500,10 +500,10 @@ def do_authentication(environ, start_response, authn_context, key,
 PASSWD = {"roland": "dianakra",
           "babs": "howes",
           "upper": "crust",
-          "linda": "explore"}
+          "lindgren": "explore"}
 
-UID2EPPN = {
-    "linda": "linda.lindgren@example.com"
+UIDMAP = {
+    "lindgren": "linda"
 }
 
 
@@ -744,7 +744,7 @@ class ATTR(Service):
         name_id = _query.subject.name_id
         uid = name_id.text
         logger.debug("Local uid: %s" % uid)
-        info_resp = USERS(UID2EPPN[uid])
+        info_resp = USERS(UIDMAP[uid])
 
         if isinstance(info_resp, Response):
             return info_resp(self.environ, self.start_response)
@@ -989,7 +989,8 @@ if __name__ == '__main__':
     AUTHN_BROKER.add(authn_context_class_ref(UNSPECIFIED),
                      "", 0, "http://%s" % socket.gethostname())
 
-    USERS = UMAUserInfo(BASE, ["%s/authz_cb" % BASE], "http://localhost:8089")
+    USERS = UMAUserInfo(BASE, ["%s/authz_cb" % BASE], "https://localhost:8089",
+                        acr="BasicAuthn")
     IDP = server.Server(sys.argv[1], cache=Cache())
     IDP.ticket = {}
     CookieHandler.init_srv(IDP)

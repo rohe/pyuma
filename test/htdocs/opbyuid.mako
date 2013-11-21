@@ -46,6 +46,7 @@
         </p>
         <form class="form-signin" action="rp" method="get">
             <h2 class="form-signin-heading">Start sign in flow</h2>
+            <input type="hidden" name="acr" value="UserPwd">
             <input type="text" id="uid" name="uid" class="form-control" placeholder="UID" autofocus>
             <button class="btn btn-lg btn-primary btn-block" type="submit">Start</button>
         </form>

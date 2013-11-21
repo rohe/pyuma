@@ -3,7 +3,9 @@ from oic.oauth2 import rndstr
 from oic.oauth2.exception import MissingSession
 from oic.oic.consumer import Consumer
 from oic.utils.authn.authn_context import PASSWORD
-from uma.message import AuthorizationDataRequest, RPTResponse
+from uma.message import AuthorizationDataRequest
+from uma.message import RPTResponse
+from uma.message import OIDCProviderConfiguration
 from uma import UMAError
 
 __author__ = 'rolandh'
@@ -61,11 +63,23 @@ class Client(Consumer):
 
     def init_relationship(self, provider_url):
         if not self.provider_info:
+            opc = OIDCProviderConfiguration()
             try:
-                _ = self.provider_config(provider_url,
-                                         serv_pattern=UMACONF_PATTERN)
+                pcr = self.provider_config(provider_url,
+                                           serv_pattern=UMACONF_PATTERN)
             except Exception, err:
                 raise
+            else:
+                opc.update(pcr)
+            try:
+                pcr = self.provider_config(provider_url,
+                                           serv_pattern=UMACONF_PATTERN)
+            except Exception, err:
+                raise
+            else:
+                opc.update(pcr)
+
+            self.provider_info[opc["issuer"]] = opc
 
         if not self.client_secret:
             self.register(
@@ -76,13 +90,16 @@ class Client(Consumer):
         if token_type in ["AAT", "PAT"]:
             return UMA_SCOPE[token_type]
 
-    def acquire_grant(self, resource_server, token_type, userid, state=""):
+    def acquire_grant(self, resource_server, token_type, userid, state="",
+                      acr=PASSWORD):
         """
         Get a grant by which a PAT/AAT token can be acquired from the server
 
         :param resource_server: The OP to use
         :param token_type: Which kind of token to acquire
         :param userid: On behalf of which user
+        :param state:
+        :param acr: Authentication Context Reference
         """
 
         if userid not in self.token:
@@ -103,7 +120,7 @@ class Client(Consumer):
                         "redirect_uri": self.redirect_uris[0],
                         "scope": [self.get_uma_scope(token_type), "openid"],
                         "state": state,
-                        "acr_values": [PASSWORD]}
+                        "acr_values": [acr]}
 
         # Authenticate using HTTP basic authn
         http_args = self.client_authn_method[

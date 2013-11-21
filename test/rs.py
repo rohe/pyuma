@@ -1,58 +1,49 @@
+#!/usr/bin/env python
 import base64
-import copy
 import hashlib
 import json
 import re
 import sys
 import logging
 import traceback
-import urllib
 import requests
 
 from urlparse import parse_qs
 from cherrypy import wsgiserver
 
-from mako.lookup import TemplateLookup
-
 from oic.oauth2.message import AuthorizationResponse
 from oic.oauth2.message import MissingRequiredAttribute
-from oic.utils.http_util import Response, Forbidden, CookieDealer
+from oic.utils.http_util import Response
+from oic.utils.http_util import Forbidden
+from oic.utils.http_util import CookieDealer
+from oic.utils.http_util import InvalidCookieSign
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import NotFound
 from oic.utils.http_util import ServiceError
-from oic.utils.userinfo import UserInfo
 
-from uma import init_keyjar
-from uma.client import UMA_SCOPE
 from uma.message import ResourceSetDescription
 from uma.message import PermissionRegistrationResponse
-from uma.resourcesrv import ResourceServer
-from uma.resourcesrv import DESC_BASE
 from uma.resourcesrv import Unknown
 from uma.saml2uma import ErrorResponse
 from uma.saml2uma import ResourceResponse
 from uma.resourcesrv import UnknownAuthzSrv
+import uma_rs
+from uma_rs import build_description
 
 __author__ = 'rolandh'
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("")
+LOGFILE_NAME = 'uma_rs.log'
+hdlr = logging.FileHandler(LOGFILE_NAME)
+base_formatter = logging.Formatter(
+    "%(asctime)s %(name)s:%(levelname)s %(message)s")
+hdlr.setFormatter(base_formatter)
+logger.addHandler(hdlr)
+logger.setLevel(logging.DEBUG)
 
 PORT = 8089
-HOST = "http://localhost:%s" % PORT
-CONFIG = {
-    "scope": [UMA_SCOPE["PAT"], "openid"],
-    "base_url": HOST,
-    "registration_info": {
-        "client_name": HOST,
-        "application_type": "web",
-        "redirect_uris": ["%s/uma" % HOST]
-    },
-    "template_lookup": TemplateLookup(directories=['templates', 'htdocs'],
-                                      module_directory='modules',
-                                      input_encoding='utf-8',
-                                      output_encoding='utf-8'),
-}
+HOST = "https://localhost:%s" % PORT
 KEYS = {
     "RSA": {
         "key": "as.key",
@@ -114,6 +105,14 @@ def static(environ, session, path):
 # ........................................................................
 
 
+def opbyuid(environ, start_response):
+    resp = Response(mako_template="opbyuid.mako",
+                    template_lookup=uma_rs.LOOKUP,
+                    headers=[])
+
+    return resp(environ, start_response)
+
+
 #noinspection PyUnusedLocal
 def dataset_endpoint(environ, session, path, query):
     owner = path[5:]
@@ -125,24 +124,6 @@ def dataset_endpoint(environ, session, path, query):
 URLS = [
     (r'^info', dataset_endpoint),
 ]
-
-USERDB = {
-    "hans.granberg@example.com": {
-        "displayName": "Hans Granberg",
-        "givenName": "Hans",
-        "sn": "Granberg",
-        "eduPersonNickname": "Hasse",
-        "email": "hans@example.org",
-    },
-    "linda.lindgren@example.com": {
-        "displayName": "Linda Lindgren",
-        "eduPersonNickname": "Linda",
-        "givenName": "Linda",
-        "sn": "Lindgren",
-        "email": "linda@example.com",
-        "uid": "linda"
-    }
-}
 
 BUNDLES = {
     "name": ["givenName", "displayName", "sn", "initials", "eduPersonNickname"],
@@ -208,25 +189,6 @@ def build_description_bundles(uid, info):
     return desc
 
 
-def build_description(uid, info):
-    """
-    :param uid: The entity identifier
-    :param info: A dictionary with information about the entity
-    :return: A resource set description
-    """
-    scopes = [DESC_BASE]  # ALL
-    for attr, val in info.items():
-        scopes.append("%s/%s" % (DESC_BASE, attr))
-        if isinstance(val, basestring):
-            scopes.append("%s/%s/%s" % (DESC_BASE, attr, urllib.quote(val)))
-        else:
-            for v in val:
-                scopes.append("%s/%s/%s" % (DESC_BASE, attr, urllib.quote(v)))
-
-    desc = ResourceSetDescription(name=uid, scopes=scopes)
-    return desc
-
-
 RESOURCE_PATTERN = "info/%s"
 
 
@@ -234,13 +196,22 @@ def application(environ, start_response):
     session = {}
     try:
         cookie = environ["HTTP_COOKIE"]
-        _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
-        if _tmp:
-            session = eval(_tmp[0])
+        try:
+            _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
+        except InvalidCookieSign:
+            pass
+        else:
+            if _tmp:
+                session = eval(_tmp[0])
     except KeyError:
         pass
 
     path = environ.get('PATH_INFO', '').lstrip('/')
+
+    logger.info("PATH: %s" % path)
+    if session:
+        logger.info("Session: %s" % (session,))
+
     if path == "robots.txt":
         return static(environ, session, "static/robots.txt")
     elif path.startswith("static/"):
@@ -251,7 +222,12 @@ def application(environ, start_response):
     except KeyError:
         query = None
 
-    if path == "rp":
+    if query:
+        logger.info("Query: %s" % (query,))
+
+    if path == "":
+        return opbyuid(environ, start_response)
+    elif path == "rp":
         link = acr = ""
         if "uid" in query:
             try:
@@ -376,58 +352,6 @@ def application(environ, start_response):
 # -----------------------------------------------------------------------------
 
 
-class IdmUserInfo(UserInfo):
-    """ Read only interface to a user info store """
-
-    @staticmethod
-    def _filtering(userinfo, authzdesc=None):
-        """
-        Return only those claims that are asked for.
-        It's a best effort task; if essential claims are not present
-        no error is flagged.
-
-        :param userinfo: A dictionary containing the available user info.
-        :param authzdesc: A list of Authz descriptions
-        :return: A dictionary of attribute values
-        """
-
-        if authzdesc is None:
-            return copy.copy(userinfo)
-        else:
-            ld = len(DESC_BASE)
-            rel_scopes = []
-            for ad in authzdesc:
-                rel_scopes.extend([s[ld:] for s in ad["scopes"]])
-
-            if "" in rel_scopes:  # Anything match
-                return copy.copy(userinfo)
-            else:
-                result = {}
-                for attr, val in userinfo.items():
-                    if attr in rel_scopes:
-                        result[attr] = val
-                    else:
-                        _val = []
-                        if isinstance(val, basestring):
-                            ava = "%s/%s" % (attr, urllib.quote(val))
-                            if ava in rel_scopes:
-                                _val.append(val)
-                        else:
-                            for v in val:
-                                ava = "%s/%s" % (attr, urllib.quote(v))
-                                if ava in rel_scopes:
-                                    _val.append(v)
-                        if _val:
-                            result[attr] = _val
-
-            return result
-
-    def __call__(self, userid, authzdesc=None, **kwargs):
-        try:
-            return self._filtering(self.db[userid], authzdesc)
-        except KeyError:
-            return {}
-
 if __name__ == '__main__':
     #parser = argparse.ArgumentParser()
     #parser.add_argument(dest="config")
@@ -435,17 +359,20 @@ if __name__ == '__main__':
     #
     #sys.path.insert(0, ".")
 
+    SERVER_CERT = "pki/server.crt"
+    SERVER_KEY = "pki/server.key"
+    CA_BUNDLE = None
+
     # The UMA RS
-    RES_SRV = ResourceServer(IdmUserInfo(USERDB), CONFIG, baseurl=HOST)
-    init_keyjar(RES_SRV, KEYS, "static/jwk_rs.json")
-    CookieHandler.init_srv(RES_SRV)
+    RES_SRV = uma_rs.main(HOST, CookieHandler)
+
     SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 
-    #if BASE.startswith("https"):
-    #    from cherrypy.wsgiserver import ssl_pyopenssl
-    #
-    #    SRV.ssl_adapter = ssl_pyopenssl.pyOpenSSLAdapter(
-    #        SERVER_CERT, SERVER_KEY, CA_BUNDLE)
+    if HOST.startswith("https"):
+        from cherrypy.wsgiserver import ssl_pyopenssl
+
+        SRV.ssl_adapter = ssl_pyopenssl.pyOpenSSLAdapter(
+            SERVER_CERT, SERVER_KEY, CA_BUNDLE)
 
     #logger.info("RP server starting listening on port:%s" % rp_conf.PORT)
     print "RS started, listening on port:%s" % PORT

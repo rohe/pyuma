@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class UMAUserInfo(SAMLUserInfo):
-    def __init__(self, client_name, redirect_uris, resource_srv):
+    def __init__(self, client_name, redirect_uris, resource_srv, acr):
         SAMLUserInfo.__init__(self)
 
         # The UMA Client
@@ -33,6 +33,7 @@ class UMAUserInfo(SAMLUserInfo):
         self.client = Client({}, cconf, registration_info=reginfo)
         self.client.redirect_uris = redirect_uris
         self.resource_srv = resource_srv
+        self.acr = acr
 
     def __call__(self, user, attrs=None, state=""):
         """
@@ -71,7 +72,8 @@ class UMAUserInfo(SAMLUserInfo):
 
         if resp.status_code == 401:  # No RPT
             as_uri = resp.headers["as_uri"]
-            resp = self.client.acquire_grant(as_uri, "RPT", sp_user, state)
+            resp = self.client.acquire_grant(as_uri, "RPT", sp_user, state,
+                                             self.acr)
             if resp.status_code == 302:  # which it should be
                 headers = [(a, b) for a, b in resp.headers.items()
                            if a != "location"]
