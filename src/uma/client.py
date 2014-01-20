@@ -1,12 +1,14 @@
 import urllib
 from oic.oauth2 import rndstr
 from oic.oauth2.exception import MissingSession
-from oic.oic.consumer import Consumer
+from oic.oauth2 import dynreg
+from oic.oic.message import ProviderConfigurationResponse
 from oic.utils.authn.authn_context import PASSWORD
 from uma.message import AuthorizationDataRequest
 from uma.message import RPTResponse
-from uma.message import OIDCProviderConfiguration
 from uma import UMAError
+from uma import AAT
+from uma import PAT
 
 __author__ = 'rolandh'
 
@@ -15,10 +17,7 @@ class ConnectionFailure(Exception):
     pass
 
 
-UMA_SCOPE = {
-    "AAT": "http://docs.kantarainitiative.org/uma/scopes/authz.json",
-    "PAT": "http://docs.kantarainitiative.org/uma/scopes/prot.json",
-}
+UMA_SCOPE = {"AAT": AAT, "PAT": PAT}
 
 UMACONF_PATTERN = "%s/.well-known/uma-configuration"
 
@@ -28,12 +27,12 @@ DEF_SIGN_ALG = {"id_token": "RS256",
                 "private_key_jwt": "HS256"}
 
 
-class Client(Consumer):
-    """ An UMA client implementation
-
+class Client(dynreg.Client):
+    """ An UMA client implementation based on OAuth2 with Dyn Reg.
     """
     #noinspection PyUnusedLocal
-    def __init__(self, session_db, client_config=None,
+    def __init__(self, client_id=None, ca_certs=None,
+                 client_authn_method=None, keyjar=None,
                  server_info=None, authz_page="", flow_type="", password=None,
                  registration_info=None, response_type="", scope=""):
 
@@ -41,29 +40,35 @@ class Client(Consumer):
                   "response_type": response_type,
                   "scope": scope}
 
-        Consumer.__init__(self, session_db, config,
-                          client_config=client_config,
-                          server_info=server_info)
+        dynreg.Client.__init__(self, client_id, ca_certs, client_authn_method,
+                               keyjar)
 
         self.provider_info = {}
         # token per user
         self.token = {}
-        self.behaviour = {"require_signed_request_object":
-                              DEF_SIGN_ALG["openid_request_object"]}
+        self.behaviour = {
+            "require_signed_request_object":
+            DEF_SIGN_ALG["openid_request_object"]}
 
         self.registration_info = registration_info
         self.allow = {}
-        self.registration_response = None
-        self.registration_expires = 0
-        self.registration_access_token = ""
-        self.state = {}
+        self.state = ""
         self.keyjar = None
         self.client_id = ""
         self.client_secret = ""
+        self.request2endpoint.update({
+            "RegistrationRequest": "dynamic_client_endpoint",
+            "AuthorizationRequest": "user_endpoint",
+            "ResourceSetDescription": "resource_set_registration_endpoint",
+            "IntrospectionRequest": "introspection_endpoint",
+            "PermissionRegistrationRequest": "permission_registration_endpoint",
+            "AuthorizationDataRequest": "authorization_request_endpoint",
+            "": "rpt_endpoint"
+        })
 
     def init_relationship(self, provider_url):
         if not self.provider_info:
-            opc = OIDCProviderConfiguration()
+            opc = ProviderConfigurationResponse()
             try:
                 pcr = self.provider_config(provider_url,
                                            serv_pattern=UMACONF_PATTERN)
@@ -71,6 +76,7 @@ class Client(Consumer):
                 raise
             else:
                 opc.update(pcr)
+
             try:
                 pcr = self.provider_config(provider_url,
                                            serv_pattern=UMACONF_PATTERN)
@@ -173,19 +179,27 @@ class Client(Consumer):
 
         return uid
 
-    def authorization_data_request(self, userid, ticket):
-        adr = AuthorizationDataRequest(ticket=ticket,
-                                       rpt=self.token[userid]["RPT"])
+    def create_authorization_data_request(self, userid, ticket):
+        adr = AuthorizationDataRequest(
+            ticket=ticket, rpt=self.token[userid]["RPT"])
         _aat = self.token[userid]["AAT"]["access_token"]
         kwargs = {"headers": {"Authorization": "Bearer %s" % _aat},
                   "data": adr.to_json()}
         url = self.provider_info.values()[0]["authorization_request_endpoint"]
+        return url, kwargs
+
+    def authorization_data_request(self, userid, ticket):
+        url, kwargs = self.create_authorization_data_request(userid, ticket)
         return self.send(url, "POST", **kwargs)
 
-    def get_rpt(self, user):
+    def create_rpt_request(self, user):
         _aat = self.token[user]["AAT"]["access_token"]
         kwargs = {"headers": {"Authorization": "Bearer %s" % _aat}}
         url = self.provider_info.values()[0]["rpt_endpoint"]
+        return url, kwargs
+
+    def get_rpt(self, user):
+        url, kwargs = self.create_rpt_request(user)
         resp = self.send(url, "POST", **kwargs)
 
         if resp.status_code == 200:
@@ -193,3 +207,6 @@ class Client(Consumer):
             self.token[user]["RPT"] = rptr["rpt"]
         else:
             raise UMAError(resp.reason)
+
+    def match_preferences(self, pcr=None, issuer=None):
+        pass

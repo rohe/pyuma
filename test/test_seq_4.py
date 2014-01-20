@@ -29,6 +29,23 @@ ressrv = uma_rs.main(RS_HOST, RS_CookieHandler)
 
 print "go!"
 
+
+def introspect(_client, rsrv, asrv):
+    _crpt = _client.token[USER]["RPT"]
+
+    _pat = rsrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
+    _client_x = rsrv.client[rsrv.permreg.get(RESOURCE_OWNER, "authzsrv")]
+    ireq = IntrospectionRequest(token=_crpt)
+
+    req_args = {"access_token": _pat}
+    http_args = _client_x.client_authn_method[
+        "bearer_header"](rsrv).construct(ireq, request_args=req_args)
+
+    _iresp = asrv.introspection_endpoint(ireq.to_json(),
+                                         http_args["headers"]["Authorization"])
+
+    return IntrospectionResponse().from_json(_iresp.message)
+
 # ============================== 1 ===========================================
 # teach the RS about what the AS can do and where (=endpoints)
 
@@ -219,20 +236,7 @@ _uma_client.token[USER]["RPT"] = rtr["rpt"]
 
 # Introspection reveals no permissions are bound to the RPT
 
-_rpt = _uma_client.token[USER]["RPT"]
-
-pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
-client_x = ressrv.client[ressrv.permreg.get(RESOURCE_OWNER, "authzsrv")]
-ir = IntrospectionRequest(token=_rpt)
-
-request_args = {"access_token": pat}
-ht_args = client_x.client_authn_method[
-    "bearer_header"](ressrv).construct(ir, request_args=request_args)
-
-resp = authzsrv.introspection_endpoint(ir.to_json(),
-                                       ht_args["headers"]["Authorization"])
-
-ir = IntrospectionResponse().from_json(resp.message)
+ir = introspect(_uma_client, ressrv, authzsrv)
 
 assert ir["active"] is True
 assert "permissions" not in ir
@@ -260,24 +264,44 @@ assert res.status == "200 OK"
 # Now everything should be ready for accessing the resource
 
 # The resource server will do an introspection of the RPT
-_rpt = _uma_client.token[USER]["RPT"]
+ir = introspect(_uma_client, ressrv, authzsrv)
 
-pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
-client_x = ressrv.client[ressrv.permreg.get(RESOURCE_OWNER, "authzsrv")]
-ir = IntrospectionRequest(token=_rpt)
+assert ir["active"] is True
+assert "permissions" in ir
 
-request_args = {"access_token": pat}
-ht_args = client_x.client_authn_method[
-    "bearer_header"](ressrv).construct(ir, request_args=request_args)
-
-resp = authzsrv.introspection_endpoint(ir.to_json(),
-                                       ht_args["headers"]["Authorization"])
-
-iresp = IntrospectionResponse().from_json(resp.message)
-
-assert iresp["active"] is True
-assert "permissions" in iresp
-
-info = ressrv.dataset(RESOURCE_OWNER, iresp["permissions"])
+info = ressrv.dataset(RESOURCE_OWNER, ir["permissions"])
 
 assert info == {'displayName': 'Linda Lindgren'}
+
+# =============================================================================
+# remove the user defined permission
+# =============================================================================
+
+authzsrv.remove_permission(RESOURCE_OWNER, SP_ENTITY_ID_1, rsd["name"])
+
+# Introspection shows the RPT is inactive
+
+ir = introspect(_uma_client, ressrv, authzsrv)
+
+assert ir["active"] is False
+
+# Trying to register a authorization request should fail
+
+REQ_SCOPES = ["http://its.umu.se/uma/attr/displayName"]
+prr = PermissionRegistrationRequest(resource_set_id=_rsid, scopes=REQ_SCOPES)
+
+client_y, url_y, ht_args = ressrv.register_init(
+    RESOURCE_OWNER, "permission_registration_endpoint", prr, _rsid)
+
+authninfo = ht_args["headers"]["Authorization"]
+permresp = authzsrv.permission_registration_endpoint(prr.to_json(), authninfo)
+created = PermissionRegistrationResponse().from_json(permresp.message)
+_y, kwargs = _uma_client.create_authorization_data_request(USER,
+                                                           created["ticket"])
+
+request = kwargs["data"]
+authn_info = kwargs["headers"]["Authorization"]
+res = authzsrv.authorization_request_endpoint(request, authn_info)
+
+assert res.status == '400 Bad Request'
+assert res.message == 'No permission given'

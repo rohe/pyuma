@@ -95,6 +95,8 @@ ht_args = client.client_authn_method[
 authn = ht_args["headers"]["Authorization"]
 
 rsid = "abcdefgh"
+ressrv.userinfo_hash[rsid] = hash(user_info)
+
 as_path = "/resource_set/%s" % rsid
 # Simple map between path and rsid, might need a layer of indirection
 # link from the path used by the client and the rsid
@@ -281,3 +283,117 @@ assert "permissions" in iresp
 info = ressrv.dataset(RESOURCE_OWNER, iresp["permissions"])
 
 assert info == {'displayName': 'Linda Lindgren'}
+
+## ============================================================================
+# Store a new permission for a resource set
+## ============================================================================
+
+rsd = authzsrv.resource_set.read(authzsrv.map_rsid_id["abcdefgh"])
+
+assert rsd["name"] == "linda"
+
+SP_ENTITY_ID_1 = "https://localhost:8092/sp.xml"
+SCOPES_X = ["http://its.umu.se/uma/attr/sn",
+            "http://its.umu.se/uma/attr/givenName",
+            "http://its.umu.se/uma/attr/uid",
+            "http://its.umu.se/uma/attr/email"]
+
+#If something goes wrong I will get an exception otherwise silence !
+authzsrv.store_permission(RESOURCE_OWNER, SP_ENTITY_ID_1, rsd["name"], SCOPES_X)
+
+# Do introspection on the RPT which by now should be inactive
+# which should be treated as no RPT present
+_rpt = _uma_client.token[USER]["RPT"]
+
+pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
+client_x = ressrv.client[ressrv.permreg.get(RESOURCE_OWNER, "authzsrv")]
+ir = IntrospectionRequest(token=_rpt)
+
+request_args = {"access_token": pat}
+ht_args = client_x.client_authn_method[
+    "bearer_header"](ressrv).construct(ir, request_args=request_args)
+
+resp = authzsrv.introspection_endpoint(ir.to_json(),
+                                       ht_args["headers"]["Authorization"])
+
+ir = IntrospectionResponse().from_json(resp.message)
+
+assert ir["active"] is False
+
+# Get a new RPT from the AS using the AAT as authentication
+authn = "Bearer %s" % _uma_client.token[USER]["AAT"]["access_token"]
+resp = authzsrv.rpt_endpoint(authn)
+
+rtr = RPTResponse().from_json(resp.message)
+_uma_client.token[USER]["RPT"] = rtr["rpt"]
+
+# Introspection reveals no permissions are bound to the RPT
+
+_rpt = _uma_client.token[USER]["RPT"]
+
+pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
+client_x = ressrv.client[ressrv.permreg.get(RESOURCE_OWNER, "authzsrv")]
+ir = IntrospectionRequest(token=_rpt)
+
+request_args = {"access_token": pat}
+ht_args = client_x.client_authn_method[
+    "bearer_header"](ressrv).construct(ir, request_args=request_args)
+
+resp = authzsrv.introspection_endpoint(ir.to_json(),
+                                       ht_args["headers"]["Authorization"])
+
+ir = IntrospectionResponse().from_json(resp.message)
+
+assert ir["active"] is True
+assert "permissions" not in ir
+
+# The RS registers an Authorization request
+REQ_SCOPES = ["http://its.umu.se/uma/attr/sn",
+              "http://its.umu.se/uma/attr/givenName",
+              "http://its.umu.se/uma/attr/email"]
+prr = PermissionRegistrationRequest(resource_set_id=_rsid, scopes=REQ_SCOPES)
+
+client1, url1, ht_args = ressrv.register_init(
+    RESOURCE_OWNER, "permission_registration_endpoint", prr, _rsid)
+
+authninfo = ht_args["headers"]["Authorization"]
+permresp = authzsrv.permission_registration_endpoint(prr.to_json(), authninfo)
+created = PermissionRegistrationResponse().from_json(permresp.message)
+_1, kwargs = _uma_client.create_authorization_data_request(USER,
+                                                           created["ticket"])
+
+request = kwargs["data"]
+authn_info = kwargs["headers"]["Authorization"]
+res = authzsrv.authorization_request_endpoint(request, authn_info)
+
+assert res.status == "200 OK"
+
+# Now everything should be ready for accessing the resource
+
+# The resource server will do an introspection of the RPT
+_rpt = _uma_client.token[USER]["RPT"]
+
+pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
+client_x = ressrv.client[ressrv.permreg.get(RESOURCE_OWNER, "authzsrv")]
+ir = IntrospectionRequest(token=_rpt)
+
+request_args = {"access_token": pat}
+ht_args = client_x.client_authn_method[
+    "bearer_header"](ressrv).construct(ir, request_args=request_args)
+
+resp = authzsrv.introspection_endpoint(ir.to_json(),
+                                       ht_args["headers"]["Authorization"])
+
+iresp = IntrospectionResponse().from_json(resp.message)
+
+assert iresp["active"] is True
+assert "permissions" in iresp
+
+info = ressrv.dataset(RESOURCE_OWNER, iresp["permissions"])
+
+assert info == {'givenName': 'Linda', 'sn': 'Lindgren',
+                'email': 'linda@example.com'}
+
+ressrv.dataset.db[RESOURCE_OWNER]["email"] = "linda@example.org"
+
+

@@ -1,18 +1,13 @@
 #!/usr/bin/env python
 import base64
 import hashlib
-import json
-import re
-import sys
 import logging
-import traceback
 import requests
 
 from urlparse import parse_qs
 from cherrypy import wsgiserver
 
 from oic.oauth2.message import AuthorizationResponse
-from oic.oauth2.message import MissingRequiredAttribute
 from oic.utils.http_util import Response
 from oic.utils.http_util import Forbidden
 from oic.utils.http_util import CookieDealer
@@ -22,14 +17,12 @@ from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import NotFound
 from oic.utils.http_util import ServiceError
 
-from uma.message import ResourceSetDescription
 from uma.message import PermissionRegistrationResponse
 from uma.resourcesrv import Unknown
 from uma.saml2uma import ErrorResponse
-from uma.saml2uma import ResourceResponse
 from uma.resourcesrv import UnknownAuthzSrv
+from uma.json_resource_server import JsonResourceServer
 import uma_rs
-from uma_rs import build_description
 
 __author__ = 'rolandh'
 
@@ -42,8 +35,8 @@ hdlr.setFormatter(base_formatter)
 logger.addHandler(hdlr)
 logger.setLevel(logging.DEBUG)
 
-PORT = 8089
-HOST = "https://localhost:%s" % PORT
+# -----------------------------------------------------------------------------
+
 KEYS = {
     "RSA": {
         "key": "as.key",
@@ -52,9 +45,11 @@ KEYS = {
 }
 
 RES_SRV = None
-RP = None
 CookieHandler = CookieDealer(None)
 COOKIE_NAME = "rs_uma"
+DATASET = None
+
+# -----------------------------------------------------------------------------
 
 
 def get_body(environ):
@@ -98,7 +93,7 @@ def static(environ, session, path):
         except KeyError:
             ctype = CTYPE_MAP["txt"]
 
-        return Response(text, headers=[('Content-Type', ctype)])
+        return Response(text, content=ctype)
     except IOError:
         return NotFound()
 
@@ -113,84 +108,7 @@ def opbyuid(environ, start_response):
     return resp(environ, start_response)
 
 
-#noinspection PyUnusedLocal
-def dataset_endpoint(environ, session, path, query):
-    owner = path[5:]
-    return RES_SRV.dataset_endpoint(query, owner, environ)
-
-# Dataset url syntax
-# /info/<userid>?attribute=<SP separated list>&bundle=<SP separated list>
-
-URLS = [
-    (r'^info', dataset_endpoint),
-]
-
-BUNDLES = {
-    "name": ["givenName", "displayName", "sn", "initials", "eduPersonNickname"],
-    "static_org_info": ["c", "o", "co"],
-    "other": ["eduPersonPrincipalName", "eduPersonScopedAffiliation", "mail"],
-    "address": ["l", "streetAddress", "stateOrProvinceName",
-                "postOfficeBox", "postalCode", "postalAddress",
-                "co"]
-}
-
-
-# Will produce something like this
-#{
-#  "resource_set_id": "<uid>",
-#  "scopes": [
-#      "http://idm.example.com/dev/actions/view",
-#      "http://idm.example.com/dev/actions/all"
-#  ],
-#  "member": [
-#       {
-#           "resource_set_id":"<uid>:address",
-#           "member": [
-#                {"resource_set_id": "<uid>:street_address"}
-#                {"resource_set_id": "<uid>:locality"}
-#                {"resource_set_id": "<uid>:postal_code"}
-#                {"resource_set_id": "<uid>:country"}
-#           ]
-#       }
-#  ]
-#}
-def build_description_bundles(uid, info):
-    """
-    :param uid: The entity identifier
-    :param info: A dictionary with information about the entity
-    :return: A resource set description
-    """
-    singles = info.keys()
-    desc = ResourceSetDescription(
-        name=uid, scope=["http://its.umu.se/uma/actions/read"])
-    for name, collection in BUNDLES.items():
-        bundle = None
-        for attr in collection:
-            if attr in info:
-                try:
-                    singles.remove(attr)
-                except AttributeError:
-                    pass
-                res = ResourceSetDescription(
-                    name="%s:%s" % (uid, attr),
-                    scope=["http://its.umu.se/uma/actions/read"])
-                if not bundle:
-                    bundle = ResourceSetDescription(
-                        name="%s:%s" % (uid, name),
-                        scope=["http://its.umu.se/uma/actions/read"])
-                    try:
-                        desc["member"].append(bundle)
-                    except KeyError:
-                        desc["member"] = bundle
-                try:
-                    bundle["member"].append(res)
-                except KeyError:
-                    bundle["member"] = res
-    return desc
-
-
-RESOURCE_PATTERN = "info/%s"
-
+# =============================================================================
 
 def application(environ, start_response):
     session = {}
@@ -254,13 +172,13 @@ def application(environ, start_response):
             resp = BadRequest()
             return resp(environ, start_response)
     elif path.startswith("info"):
-        # Assume query of the form
-        # info/<uid>/<bundle>[?attr=<attribute>[&attr=<attribute>]] or
-        # info/<uid>[?attr=<attribute>[&attr=<attribute>]]
-        owner = path[5:]
-        owner = owner.replace("--", "@")
         try:
-            res = RES_SRV.dataset_endpoint(query, owner, environ)
+            owner = DATASET.get_owner(path)
+        except Unknown:  # Means not owned by someone, so just return
+            return DATASET.do_get(path)
+
+        try:
+            resp = RES_SRV.dataset_access(owner, environ)
         except Unknown:
             resp = BadRequest("Unknown user: %s" % owner)
             return resp(environ, start_response)
@@ -272,26 +190,32 @@ def application(environ, start_response):
             return resp(environ, start_response)
 
         # either a ErrorResponse or a ResourceResponse
+        if isinstance(resp, ErrorResponse):
+            try:
+                resp.verify()
+            except Exception:
+                resp = ServiceError()
+                return resp(environ, start_response)
 
-        er = ErrorResponse().from_json(res)
-        try:
-            er.verify()
             headers = []
             for var in ["as_uri", "host_id", "error"]:
                 try:
-                    headers.append((var, str(er[var])))
+                    headers.append((var, str(resp[var])))
                 except KeyError:
                     pass
 
-            if "ticket" in er:
-                prr = PermissionRegistrationResponse(ticket=er["ticket"])
+            if "ticket" in resp:
+                prr = PermissionRegistrationResponse(ticket=resp["ticket"])
                 resp = Forbidden(prr.to_json(), headers=headers,
                                  content="application/json")
             else:
                 resp = Unauthorized(headers=headers)
-        except MissingRequiredAttribute:
-            rr = ResourceResponse().from_json(res)
-            resp = Response(rr.to_json())
+        else:  # Got some permission, let the data set do it's thing
+            try:
+                resp = DATASET.do(resp["permissions"], path, environ)
+            except Exception:
+                resp = BadRequest()
+                return resp(environ, start_response)
 
         return resp(environ, start_response)
 
@@ -316,32 +240,17 @@ def application(environ, start_response):
         #                                  behavior="use_authorization_header",
         #                                  token_type=_pat["token_type"])
         # build resource_set_description
-        user_info = RES_SRV.dataset(uid)
-        _hash = hashlib.sha224(json.dumps(user_info)).hexdigest()
-        desc = build_description(uid, user_info)
-        logger.info("Resource set description: %s" % (desc,))
-        try:
-            RES_SRV.register_resource_set_description(uid, desc.to_json(), uid,
-                                                      _hash)
-        except Exception, err:
-            raise
+
+        descs = DATASET.build_resource_set_description(uid)
+        logger.info("Resource set descriptions: %s" % (descs,))
+        for desc in descs:
+            try:
+                RES_SRV.register_resource_set_description(uid, desc.to_json(),
+                                                          uid)
+            except Exception, err:
+                raise
 
         resp = Response("OK")
-
-    if not resp:
-        for regex, callback in URLS:
-            match = re.search(regex, path)
-            if match is not None:
-                logger.info("callback: %s" % callback)
-                try:
-                    resp = callback(environ, session, path, query)
-                except Exception, err:
-                    print >> sys.stderr, "%s" % err
-                    message = traceback.format_exception(*sys.exc_info())
-                    print >> sys.stderr, message
-                    logger.exception("%s" % err)
-                    resp = ServiceError("%s" % err)
-                    return resp(environ, start_response)
 
     if not resp:
         logger.debug("unknown side: %s" % path)
@@ -359,9 +268,15 @@ if __name__ == '__main__':
     #
     #sys.path.insert(0, ".")
 
+    PORT = 8089
+    HOST = "https://localhost:%s" % PORT
+
     SERVER_CERT = "pki/server.crt"
     SERVER_KEY = "pki/server.key"
     CA_BUNDLE = None
+    ROOT = "resources"
+
+    DATASET = JsonResourceServer(ROOT, "info", HOST)
 
     # The UMA RS
     RES_SRV = uma_rs.main(HOST, CookieHandler)

@@ -1,9 +1,11 @@
-from oic.oauth2 import Message, PyoidcError
+from oic.oauth2 import Message
+from oic.oauth2 import PyoidcError
 from oic.oauth2 import SINGLE_OPTIONAL_INT
 from oic.oauth2 import OPTIONAL_LIST_OF_STRINGS
 from oic.oauth2 import REQUIRED_LIST_OF_STRINGS
 from oic.oauth2 import SINGLE_REQUIRED_STRING
 from oic.oauth2 import SINGLE_OPTIONAL_STRING
+from oic.oauth2 import dynreg
 from oic.oic.message import msg_ser
 from oic.oic.message import SINGLE_REQUIRED_INT
 from oic.oic.message import SINGLE_OPTIONAL_BOOLEAN
@@ -173,3 +175,23 @@ class RPTResponse(Message):
 class AuthorizationDataRequest(Message):
     c_param = {"rpt": SINGLE_REQUIRED_STRING,
                "ticket": SINGLE_REQUIRED_STRING}
+
+
+MSG = {
+    "ProviderConfiguration": ProviderConfiguration,
+    "Scope": Scope,
+    "ResourceSetDescription": ResourceSetDescription,
+    "StatusResponse": StatusResponse,
+    "IntrospectionRequest": IntrospectionRequest,
+    "IntrospectionResponse": IntrospectionResponse,
+    "PermissionRegistrationRequest": PermissionRegistrationRequest,
+    "RPTResponse": RPTResponse,
+    "AuthorizationDataRequest": AuthorizationDataRequest
+}
+
+
+def factory(msgtype):
+    try:
+        return MSG[msgtype]
+    except KeyError:
+        return dynreg.factory(msgtype)

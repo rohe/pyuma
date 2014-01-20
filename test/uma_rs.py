@@ -1,11 +1,17 @@
 import copy
 import urllib
 from mako.lookup import TemplateLookup
+from oic.utils.aes import encrypt
+from oic.utils.authn.client import ClientSecretBasic
+from oic.utils.authn.client import BearerHeader
 from oic.utils.userinfo import UserInfo
-from uma import init_keyjar
-from uma.client import UMA_SCOPE
+
+from uma import AAT
+from uma import PAT
+from uma.json_resource_server import JsonResourceServer
+from uma.keyjar import init_keyjar
 from uma.message import ResourceSetDescription
-from uma.resourcesrv import ResourceServer, DESC_BASE
+from uma.resourcesrv import ResourceServer1C, DESC_BASE
 
 __author__ = 'roland'
 
@@ -16,23 +22,23 @@ KEYS = {
     }
 }
 
-USERDB = {
-    "hans": {
-        "displayName": "Hans Granberg",
-        "givenName": "Hans",
-        "sn": "Granberg",
-        "eduPersonNickname": "Hasse",
-        "email": "hans@example.org",
-    },
-    "linda": {
-        "displayName": "Linda Lindgren",
-        "eduPersonNickname": "Linda",
-        "givenName": "Linda",
-        "sn": "Lindgren",
-        "email": "linda@example.com",
-        "uid": "linda"
-    }
-}
+# USERDB = {
+#     "hans": {
+#         "displayName": "Hans Granberg",
+#         "givenName": "Hans",
+#         "sn": "Granberg",
+#         "eduPersonNickname": "Hasse",
+#         "email": "hans@example.org",
+#     },
+#     "linda": {
+#         "displayName": "Linda Lindgren",
+#         "eduPersonNickname": "Linda",
+#         "givenName": "Linda",
+#         "sn": "Lindgren",
+#         "email": "linda@example.com",
+#         "uid": "linda"
+#     }
+# }
 
 RES_SRV = None
 RP = None
@@ -40,6 +46,16 @@ RP = None
 
 class IdmUserInfo(UserInfo):
     """ Read only interface to a user info store """
+    def __init__(self, db, gpii_url, symkey):
+        UserInfo.__init__(self, db)
+        self.gpii_url = gpii_url
+        self.symkey = symkey
+
+    def identity(self, userid, sp_entity_id=""):
+        _ident = copy.copy(self.db[userid])
+        msg = "{'aud':%s, 'sub':%s}" % (sp_entity_id, userid)
+        token = encrypt(self.symkey, msg)
+        _ident["gpii"] = "%s/%s/%s" % (self.gpii_url, userid, token)
 
     @staticmethod
     def _filtering(userinfo, authzdesc=None):
@@ -93,7 +109,7 @@ class IdmUserInfo(UserInfo):
 
     def __call__(self, userid, authzdesc=None, **kwargs):
         try:
-            return self._filtering(self.db[userid], authzdesc)
+            return self._filtering(self.identity(userid), authzdesc)
         except KeyError:
             return {}
 
@@ -124,18 +140,29 @@ LOOKUP = TemplateLookup(directories=['templates', 'htdocs'],
 
 
 def main(host, cookie_handler):
+    baseurl = "https://%s" % host
+
     config = {
-        "scope": [UMA_SCOPE["PAT"], "openid"],
-        "base_url": host,
         "registration_info": {
-            "client_name": host,
+            "token_endpoint_auth_method": "client_secret_basic",
             "application_type": "web",
-            "redirect_uris": ["%s/uma" % host]
+            "redirect_uris": ["%s/uma" % baseurl],
+            "grant_types": ["authorization_code", "implicit"],
+            "scope": [AAT, PAT],
+            "response_types": ["code", "token"]
         },
-        "template_lookup": LOOKUP,
+        "client_authn_method": [ClientSecretBasic, BearerHeader],
+        "flow_type": "code",
+        "symkey": "abcdefghijklmnop",
+        "baseurl": baseurl
     }
 
-    res_srv = ResourceServer(IdmUserInfo(USERDB), config, baseurl=host)
+    #gpii_url = "%s/gpii" % config["base_url"]
+    #dataset = IdmUserInfo(USERDB, gpii_url=gpii_url,
+    #                      symkey="abcdefghijklmnopqrst")
+    dataset = JsonResourceServer(root="resource", base="info", baseurl=baseurl)
+    res_srv = ResourceServer1C(dataset, **config)
+
     init_keyjar(res_srv, KEYS, "static/jwk_rs.json")
     cookie_handler.init_srv(res_srv)
 

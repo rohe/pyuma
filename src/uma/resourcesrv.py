@@ -1,16 +1,16 @@
 import logging
 from urllib import urlencode
-from oic.oauth2 import Client
+from urlparse import parse_qs
 from oic.oauth2 import rndstr
 from oic.oauth2 import JSON_ENCODED
 from oic.oauth2.provider import Endpoint
+from uma.client import Client
 from uma.message import IntrospectionRequest
 from uma.message import IntrospectionResponse
 from uma.message import PermissionRegistrationRequest
 from uma.message import PermissionRegistrationResponse
 from uma.message import ResourceSetDescription
 from uma.message import StatusResponse
-from uma.oidc import OpenIDConnect
 from uma.saml2uma import ErrorResponse
 from uma.saml2uma import ResourceResponse
 
@@ -107,18 +107,23 @@ class DataSetEndpoint(Endpoint):
     etype = "dataset_endpoint"
 
 
-class ResourceServer(OpenIDConnect):
-    def __init__(self, dataset, config=None, config_file="",
-                 baseuri="", symkey="", **kwargs):
-        OpenIDConnect.__init__(self, config, config_file, **kwargs)
+class ResourceServerBase(object):
+    def __init__(self, dataset, symkey="", baseurl=""):
         self.dataset = dataset
         self.symkey = symkey
         self.permreg = PermissionRegistry()
         self.request2endpoint = REQUEST2ENDPOINT
+        self.baseurl = baseurl
 
         self.endpoints = [DataSetEndpoint]
         self.server_environ = {}
+
+        # The relationship between a URL path and which resource id the
+        # resource is stored under
         self.path2rsid = {}
+
+        # A hash per resource (=user info) to allow simple check if
+        # something has changed.
         self.userinfo_hash = {}
 
     @staticmethod
@@ -133,20 +138,20 @@ class ResourceServer(OpenIDConnect):
             return None
 
     def authz_registration(self, owner, pat, authzsrv, client_key):
+        """
+        Note this only works if there is *one* resource per owner!!!
+
+        :param owner: The user id of the resource owner
+        :param pat: A TokenResponse instance
+        :param authzsrv: A URL pointing to the provider info of the authz server
+        :param client_key: A unique identifier of the client
+        """
+
         self.permreg.set(owner, "pat", pat)
         self.permreg.set(owner, "authzsrv", authzsrv)
         self.permreg.set(owner, "client_key", client_key)
 
-    def dataset_endpoint(self, request, owner, environ, **kwargs):
-        """
-        The endpoint at which the Resource server presents its information
-
-        :param request: Which resource that is wanted
-        :param owner: The resource owner
-        :param environ: WSGI environment dictionary
-        :param kwargs: Extra keyword arguments
-        """
-
+    def dataset_access(self, owner, environ, resource):
         # It there a RPT
         rpt = self._get_bearer_token(environ)
         if not rpt:  # No RPT
@@ -162,7 +167,7 @@ class ResourceServer(OpenIDConnect):
             _as = self.permreg.get(owner, "authzsrv")
             _pat = self.permreg.get(owner, "pat")["access_token"]
             # verify the RPT
-            resp = self.do_introspection(owner, rpt, owner)
+            resp = self.do_introspection(owner, rpt, resource)
 
             if not resp["active"]:
                 return ErrorResponse(as_uri=_as,
@@ -176,85 +181,83 @@ class ResourceServer(OpenIDConnect):
                 except (AssertionError, KeyError):
                     _path = parse_query(environ["PATH_INFO"])
                     rsid = self.path2rsid[_path]
-                    resp = self.register_permission(owner, rsid,
-                                                    permissons=[DESC_BASE])
 
+                    try:
+                        query = parse_qs(environ["QUERY_STRING"])
+                        _perms = ["%s/%s" % (DESC_BASE, v) for v in
+                                  query["attr"]]
+                    except KeyError:
+                        _perms = [DESC_BASE]
+
+                    resp = self.register_permission(owner, rsid,
+                                                    permissons=_perms)
                     return ErrorResponse(as_uri=_as,
                                          error="Forbidden",
                                          host_id="rs.example.com",
                                          ticket=resp["ticket"]).to_json()
+        return None
+
+    def dataset_endpoint(self, request, owner, environ, **kwargs):
+        """
+        The endpoint at which the Resource server presents its information
+
+        :param request: Which resource that is wanted
+        :param owner: The resource owner
+        :param environ: WSGI environment dictionary
+        :param kwargs: Extra keyword arguments
+        """
+
+        resp = self.dataset_access(owner, environ, request)
+        if isinstance(resp, ErrorResponse):
+            return resp
 
         res = self.dataset(owner, resp["permissions"])
         return ResourceResponse(resource=res).to_json()
 
-    def request_info(self, owner, msgtype, method=DEFAULT_METHOD,
-                     authn_method="bearer_header", request_args=None,
-                     extra_args=None):
+    def rs_request_info(self, owner, msgtype, method=DEFAULT_METHOD,
+                        authn_method="bearer_header", request_args=None,
+                        extra_args=None):
 
-        client = self.client[self.permreg.get(owner, "authzsrv")]
-        return client, client.request_info(msgtype, method,
-                                           request_args=request_args,
-                                           extra_args=extra_args,
-                                           authn_method=authn_method,
-                                           content_type=JSON_ENCODED)
+        pass
 
-    def do_introspection(self, owner, rpt, path=None):
+    def do_introspection(self, owner, rpt, resource=None):
         """
         The resource server doing introspection on a RPT at the AuthzServer
 
         :param owner: The owner of the resource
         :param rpt: Resource access token
-        :param path: path representing the resource
+        :param resource: the resource
         :returns:
         """
 
-        pat = self.permreg.get(owner, "pat")["access_token"]
-        client = self.client[self.permreg.get(owner, "authzsrv")]
-        ir = IntrospectionRequest(token=rpt)
+        return {}
 
-        if path:
-            ir["resource_id"] = self.path2rsid[path]
-
-        request_args = {"access_token": pat}
-        ht_args = client.client_authn_method[
-            "bearer_header"](self).construct(ir, request_args=request_args)
-
-        url = client.provider_info.values()[0]["introspection_endpoint"]
-
-        return client.request_and_return(url, IntrospectionResponse,
-                                         body=ir.to_json(), body_type="json",
-                                         http_args=ht_args)
+    def register_init(self, owner, endp, message=None, rsid=""):
+        """
+        :param owner: The resource owner
+        :param endp: The endpoint the message should be sent to
+        :param message: The registration message as a class instance
+        :param rsid: Resource set identifier
+        :return: Tuple of client instance, url to send the message to and
+            HTTP request arguments
+        """
+        return None, "", ""
 
     def _register(self, owner, method, endp, objekt=None, message=None,
                   rsid="", resp_cls=None):
-        try:
-            pat = self.permreg.get(owner, "pat")["access_token"]
-            client = self.oic_client[self.permreg.get(owner, "client_key")]
-            azs = self.permreg.get(owner, "authzsrv")
-        except Exception, err:
-            raise Unknown(owner)
+        """
 
-        request_args = {"access_token": pat}
-        if message:
-            arg = message
-        else:
-            arg = {}
-        ht_args = client.client_authn_method[
-            "bearer_header"](self).construct(arg, request_args=request_args)
-
-        url = client.provider_info[azs][endp]
-
-        if rsid:
-            if url.endswith("/"):
-                url += rsid
-            else:
-                url += "/%s" % rsid
-
-        if message:
-            objekt = message.to_json()
-
-        return client.request_and_return(url, resp_cls, method, objekt, "json",
-                                         http_args=ht_args)
+        :param owner: The owner of the resource
+        :param method: Which HTTP method to use
+        :param endp: The HTTP endpoint
+        :param objekt: An object, it's either this or the message that is
+            sent
+        :param message: Only one of objekt or message can be present
+        :param rsid: Resource ID
+        :param resp_cls: Which class the response should be of
+        :return: A *RegistrationResponse instance
+        """
+        return {}
 
     def register_permission(self, owner, resource_set_id, permissons):
         """
@@ -274,10 +277,10 @@ class ResourceServer(OpenIDConnect):
         return self._register(owner, DEFAULT_METHOD,
                               endp="permission_registration_endpoint",
                               message=prr,
-                              resp_cls=PermissionRegistrationResponse )
+                              resp_cls=PermissionRegistrationResponse)
 
     def register_resource_set_description(self, owner, resource_set_descr,
-                                          path, hashval):
+                                          path):
         """
         Registers a resource set description at the Authorization server
 
@@ -285,17 +288,13 @@ class ResourceServer(OpenIDConnect):
         :param resource_set_descr: Resource Set Description in a JSON
             format
         :param path: HTTP path at which the resource should be accessible
-        :param hashval: A hash value constructed over the user info
         :returns: A StatusResponse instance
         """
 
-        self.userinfo_hash[owner] = hash
         rsid = rndstr()
-        response = self._register(owner, "PUT",
-                                  endp="resource_set_endpoint",
-                                  objekt=resource_set_descr,
-                                  rsid=rsid,
-                                  resp_cls=StatusResponse)
+        response = self._register(
+            owner, "PUT", endp="resource_set_registration_endpoint",
+            objekt=resource_set_descr, rsid=rsid, resp_cls=StatusResponse)
 
         # StatusResponse
         assert response["status"] == "created"
@@ -350,11 +349,152 @@ class ResourceServer(OpenIDConnect):
         :param rsid:
         :returns: A ResourceSetDescription instance
         """
+        return {}
+
+    def is_resource_set_changed(self, rsid, val):
+        return val == self.userinfo_hash[rsid]
+
+
+class ResourceServer1C(ResourceServerBase, Client):
+    def __init__(self, dataset, symkey="", client_id=None,
+                 ca_certs=None, client_authn_method=None, keyjar=None,
+                 server_info=None, authz_page="", flow_type="", password=None,
+                 registration_info=None, response_type="", scope="",
+                 baseurl=""):
+        ResourceServerBase.__init__(self, dataset, symkey)
+        Client.__init__(self, client_id, ca_certs, client_authn_method, keyjar,
+                        server_info, authz_page, flow_type, password,
+                        registration_info, response_type, scope)
+
+    def rs_request_info(self, owner, msgtype, method=DEFAULT_METHOD,
+                        authn_method="bearer_header", request_args=None,
+                        extra_args=None):
+
+        return self.request_info(msgtype, method, request_args=request_args,
+                                 extra_args=extra_args,
+                                 authn_method=authn_method,
+                                 content_type=JSON_ENCODED)
+
+    def do_introspection(self, owner, rpt, path=None):
+        """
+        The resource server doing introspection on a RPT at the AuthzServer
+
+        :param owner: The owner of the resource
+        :param rpt: Resource access token
+        :param path: path representing the resource
+        :returns:
+        """
 
         pat = self.permreg.get(owner, "pat")["access_token"]
-        client = self.client[self.permreg.get(owner, "authsrv")]
+        ir = IntrospectionRequest(token=rpt)
 
-        url = client._endpoint(
+        if path:
+            ir["resource_id"] = self.path2rsid[path]
+
+        request_args = {"access_token": pat}
+        ht_args = self.client_authn_method[
+            "bearer_header"](self).construct(ir, request_args=request_args)
+
+        url = self.provider_info.values()[0]["introspection_endpoint"]
+
+        return self.request_and_return(url, IntrospectionResponse,
+                                       body=ir.to_json(), body_type="json",
+                                       http_args=ht_args)
+
+    def register_init(self, owner, endp, message=None, rsid=""):
+        """
+        :param owner: The resource owner
+        :param endp: The endpoint the message should be sent to
+        :param message: The registration message as a class instance
+        :param rsid: Resource set identifier
+        :return: Tuple of client instance, url to send the message to and
+            HTTP request arguments
+        """
+        try:
+            pat = self.permreg.get(owner, "pat")["access_token"]
+        except Exception, err:
+            raise Unknown(owner)
+        else:
+            azs = self.permreg.get(owner, "authzsrv")
+
+        request_args = {"access_token": pat}
+
+        if message:
+            arg = message
+        else:
+            arg = {}
+
+        ht_args = self.client_authn_method[
+            "bearer_header"](self).construct(arg, request_args=request_args)
+
+        url = self.provider_info[azs][endp]
+
+        if rsid:
+            if url.endswith("/"):
+                url += "resource_set/%s" % rsid
+            else:
+                url += "/resource_set/%s" % rsid
+
+        return url, ht_args
+
+    def _register(self, owner, method, endp, objekt=None, message=None,
+                  rsid="", resp_cls=None):
+
+        url, ht_args = self.register_init(owner, endp, message, rsid)
+
+        if message:
+            objekt = message.to_json()
+
+        return self.request_and_return(url, resp_cls, method, objekt, "json",
+                                       http_args=ht_args)
+
+    # def update_resource_set_description(self, owner, rsid, **kwargs):
+    #     """
+    #     Updates a resource set description at the Authorization server
+    #
+    #     :param owner:
+    #     :param rsid: The resource set identifier
+    #     :param kwargs: Whatever should be changed
+    #     :returns: A StatusResponse instance
+    #     """
+    #     authzsrv = self.permreg.get(owner, "authsrv")
+    #     pat = self.permreg.get(owner, "pat")
+    #
+    #     client = self.client[authzsrv]
+    #     csi = ResourceSetDescription(
+    #         **self.permreg.get(owner, "resource_set").to_dict())
+    #
+    #     for param in csi.parameters():
+    #         if param in ["_id", "_rev"]:  # Don't mess with these
+    #             continue
+    #         else:
+    #             try:
+    #                 csi[param] = kwargs[param]
+    #             except KeyError:
+    #                 pass
+    #
+    #
+    #     method = "PUT"
+    #     url, body, ht_args, csi = client.request_info(
+    #         ResourceSetDescription, method=method,
+    #         request_args=req_args, extra_args={"access_token": pat},
+    #         authn_method="bearer_header")
+    #
+    #     return client.request_and_return(url, StatusResponse,
+    #                                      method, body, body_type="json",
+    #                                      http_args=ht_args)
+
+    def read_resource_set_description(self, owner, rsid):
+        """
+        Reads a resource set description from the Authorization server
+
+        :param rsid:
+        :returns: A ResourceSetDescription instance
+        """
+
+        pat = self.permreg.get(owner, "pat")["access_token"]
+
+        url = self._endpoint(
             self.request2endpoint[ResourceSetDescription.__name__])
 
         if url.endswith("/"):
@@ -362,7 +502,9 @@ class ResourceServer(OpenIDConnect):
         else:
             url = "%s/%s" % (url, rsid)
 
-        ht_args = client.init_authentication_method(access_token=pat)
+        ht_args = self.init_authentication_method(
+            {}, access_token=pat, authn_method=self.client_authn_method)
 
-        return client.request_and_return(url, StatusResponse, "GET",
-                                         http_args=ht_args)
+        return self.request_and_return(url, StatusResponse, "GET",
+                                       http_args=ht_args)
+

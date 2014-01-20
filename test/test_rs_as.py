@@ -6,19 +6,19 @@ from uma.resourcesrv import DESC_BASE
 
 __author__ = 'roland'
 
-AS = "http://localhost:8088"
-RS = "http://localhost:8089"
+AS = "https://localhost:8088"
+RS = "https://localhost:8089"
 
 # User registering the AS at the RS
 s = urllib.quote(AS)
 
 # response should be a 200 OK
-resp1 = requests.request("GET", "%s/rp?url=%s&acr=linda" % (RS, s))
-#resp1 = requests.request("GET", "http://localhost:8089/rp?url=%s&acr=hans" % s)
+resp1 = requests.request("GET", "%s/rp?url=%s&acr=alice" % (RS, s),
+                         verify=False)
 
 SP = "https://localhost:8092/sp.xml"
 IDP = "http://localhost:8090"
-USER = "linda.lindgren@example.com"
+USER = "linda"
 
 # The user registers allowed access
 if resp1.status_code == 200:
@@ -27,7 +27,7 @@ if resp1.status_code == 200:
         "sp_entity_id": SP, "perm": DESC_BASE,
         "rsname": USER}))
     http_args = {"auth": (USER, "krall")}
-    resp2 = requests.request("GET", url, **http_args)
+    resp2 = requests.request("GET", url, **http_args, verify=False)
     if resp2.status_code == 200:
         # Asking for info from IdP UMA Client
         obj = urllib.quote("%s@%s" % (USER, SP))
@@ -37,11 +37,11 @@ if resp1.status_code == 200:
             print resp3.text
             # get resource sets
             resp4 = requests.request("GET", "%s/resset/%s" % (
-                AS, urllib.quote(USER)))
+                AS, urllib.quote(USER)), verify=False)
             print resp4.text
             # get assigned permissions
             resp4 = requests.request("GET", "%s/permits/%s" % (
-                AS, urllib.quote(USER)))
+                AS, urllib.quote(USER)), verify=False)
             print resp4.text
         else:
             print resp3.status_code, resp3.text

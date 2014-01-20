@@ -13,8 +13,7 @@ from oic.utils.http_util import BadRequest
 from oic.utils.http_util import NotFound
 from oic.utils.webfinger import WebFinger, OIC_ISSUER
 from uma.resource_set import UnknownObject
-
-import uma_as
+import uma_as2
 
 __author__ = 'rolandh'
 
@@ -89,7 +88,7 @@ def edit_permission_form(uid, resource_name, scopes, entity_id, checked=None):
     headers = [CookieHandler.create_cookie("%s" % (cval,), "sso", COOKIE_NAME)]
 
     resp = Response(mako_template="permissions.mako",
-                    template_lookup=uma_as.LOOKUP,
+                    template_lookup=uma_as2.LOOKUP,
                     headers=headers)
     if checked is None:
         checked = {}
@@ -134,7 +133,7 @@ def set_permission(environ, session):
         except KeyError:
             try:
                 authn_info = environ["HTTP_AUTHORIZATION"]
-                ident = BasicAuthn(AUTHZSRV, uma_as.PASSWD).authenticated_as(
+                ident = BasicAuthn(AUTHZSRV, uma_as2.PASSWD).authenticated_as(
                     authorization=authn_info)
                 _user = ident["uid"]
             except KeyError:
@@ -147,7 +146,7 @@ def set_permission(environ, session):
 
 def authenticate(environ, session, operation):
     resp = Response(mako_template="login.mako",
-                    template_lookup=uma_as.LOOKUP,
+                    template_lookup=uma_as2.LOOKUP,
                     headers=[])
 
     argv = {
@@ -178,7 +177,7 @@ def authn(environ, session):
         query = parse_qs(environ["QUERY_STRING"])
 
     try:
-        assert uma_as.PASSWD[query["login"][0]] == query["password"][0]
+        assert uma_as2.PASSWD[query["login"][0]] == query["password"][0]
     except (KeyError, AssertionError):
         return Unauthorized(), {}
 
@@ -208,12 +207,8 @@ def authn(environ, session):
 
 #noinspection PyUnusedLocal
 def dynamic_client(environ, session, query):
-    try:
-        authn_info = environ["HTTP_AUTHORIZATION"]
-    except KeyError:
-        authn_info = ""
     body = get_body(environ)
-    return AUTHZSRV.registration_endpoint(body, authn=authn_info)
+    return AUTHZSRV.registration_endpoint(body, environ)
 
 
 #noinspection PyUnusedLocal
@@ -236,7 +231,15 @@ def token(environ, session, query):
 
 #noinspection PyUnusedLocal
 def user(environ, session, query):
-    return Response()
+    try:
+        authn_info = environ["HTTP_AUTHORIZATION"]
+    except KeyError:
+        authn_info = ""
+    if not query:
+        query = get_body(environ)
+    else:
+        query = environ["QUERY_STRING"]
+    return AUTHZSRV.authorization_endpoint(query, authn_info)
 
 
 #noinspection PyUnusedLocal
@@ -351,13 +354,13 @@ def authorization_request(environ, session, query):
 
 
 #noinspection PyUnusedLocal
-def openid_provider_configuration(environ, session):
-    return AUTHZSRV.providerinfo_endpoint()
+#def openid_provider_configuration(environ, session):
+#    return AUTHZSRV.providerinfo_endpoint()
 
 
 #noinspection PyUnusedLocal
-def uma_provider_configuration(environ, session):
-    return AUTHZSRV.uma_providerinfo_endpoint()
+def provider_configuration(environ, session):
+    return AUTHZSRV.providerinfo_endpoint()
 
 
 #noinspection PyUnusedLocal
@@ -396,7 +399,7 @@ def manage(uid, headers=None):
     if headers is None:
         headers = []
 
-    resp = Response(mako_template="manage.mako", template_lookup=uma_as.LOOKUP,
+    resp = Response(mako_template="manage.mako", template_lookup=uma_as2.LOOKUP,
                     headers=headers)
 
     res_set = AUTHZSRV.resource_sets_by_user(uid)
@@ -417,7 +420,7 @@ ENDPOINT2CB = {
     "dynamic_client": dynamic_client,
     "token": token,
     "user": user,
-    "resource_set": resource_set_registration,
+    "resource_set_registration": resource_set_registration,
     "introspection": introspection,
     "permission_registration": permission_registration,
     "rpt": rpt,
@@ -510,10 +513,10 @@ def application(environ, start_response):
     else:
         query = parse_qs(environ["QUERY_STRING"])
         prepath = path.split("/")[0]
-        if path == ".well-known/openid-configuration":
-            resp = openid_provider_configuration(environ, session)
-        elif path == ".well-known/uma-configuration":
-            resp = uma_provider_configuration(environ, session)
+        #if path == ".well-known/openid-configuration":
+        #    resp = openid_provider_configuration(environ, session)
+        if path == ".well-known/uma-configuration":
+            resp = provider_configuration(environ, session)
         elif path == ".well-known/webfinger":
             resp = webfinger(environ)
         else:
@@ -529,7 +532,7 @@ def application(environ, start_response):
     if isinstance(resp, Response):
         pass
     else:
-        resp = NotImplemented(path)
+        resp = NotFound(path)
 
     return resp(environ, start_response, **argv)
 
@@ -604,7 +607,7 @@ if __name__ == '__main__':
     SPS = get_sp("./sp/sp.xml")
 
     # The UMA AS
-    AUTHZSRV = uma_as.main(BASE, CookieHandler)
+    AUTHZSRV = uma_as2.main(BASE, CookieHandler)
 
     SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 

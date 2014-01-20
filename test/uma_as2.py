@@ -1,22 +1,24 @@
 import socket
 from mako.lookup import TemplateLookup
 from oic.utils.authn.authn_context import AuthnBroker
-from oic.utils.authn.client import verify_client
+from oic.utils.authn.client import verify_client, BearerHeader
+from oic.utils.authn.client import ClientSecretPost
+from oic.utils.authn.client import ClientSecretBasic
 from oic.utils.authn.user import UserAuthnMethod, UsernamePasswordMako
 from oic.utils.authn.user import BasicAuthn
 from oic.utils.authz import Implicit
 from oic.utils.sdb import SessionDB
 from oic.utils.userinfo import UserInfo
-from uma import authzsrv, init_keyjar
+from uma import authzsrv
+from uma.keyjar import init_keyjar
 
 __author__ = 'roland'
 
 AUTHZ = Implicit("PERMISSION")
 CDB = {}
-AUTHZSRV = None
 
 PASSWD = {
-    "linda": "krall",
+    "alice": "krall",
     "hans": "thetake",
     "user": "howes",
     "https://sp.example.org/": "code"
@@ -31,12 +33,12 @@ USERDB = {
         "verified": False,
         "sub": "hans.granberg@example.org"
     },
-    "linda": {
-        "name": "Linda Lindgren",
-        "nickname": "Linda",
-        "email": "linda@example.com",
+    "alice": {
+        "name": "Alice",
+        "nickname": "linda",
+        "email": "alice@example.com",
         "verified": True,
-        "sub": "linda.lindgren@example.com"
+        "sub": "alice@example.com"
     }
 }
 
@@ -100,7 +102,7 @@ def main(base, cookie_handler):
     }
 
     ab = AuthnBroker()
-    ab.add("linda", DummyAuthn(None, "linda"))
+    ab.add("alice", DummyAuthn(None, "alice"))
     #AB.add("hans", DummyAuthn(None, "hans.granberg@example.org"))
     ab.add("UserPwd",
            UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
@@ -109,11 +111,16 @@ def main(base, cookie_handler):
     ab.add("BasicAuthn", BasicAuthnExtra(None, PASSWD), 10,
            "http://%s" % socket.gethostname())
 
-    AUTHZSRV = authzsrv.OIDCUmaAS(base, SessionDB(), CDB, ab, USERINFO, AUTHZ,
-                                  verify_client, "1234567890", keyjar=None,
-                                  configuration=as_conf,
-                                  base_url=base)
-
+    AUTHZSRV = authzsrv.OAuth2UmaAS(base, SessionDB(), CDB, ab, AUTHZ,
+                                    verify_client, "1234567890123456",
+                                    keyjar=None,
+                                    configuration=as_conf,
+                                    base_url=base,
+                                    client_info_url="%s/" % base,
+                                    client_authn_methods={
+                                        "client_secret_post": ClientSecretPost,
+                                        "client_secret_basic": ClientSecretBasic,
+                                        "bearer_header": BearerHeader})
 
     cookie_handler.init_srv(AUTHZSRV)
     init_keyjar(AUTHZSRV, KEYS, "static/jwk_as.json")
