@@ -7,7 +7,8 @@ from oic.utils.authn.user import BasicAuthn
 from oic.utils.authz import Implicit
 from oic.utils.sdb import SessionDB
 from oic.utils.userinfo import UserInfo
-from uma import authzsrv, init_keyjar
+from uma import authzsrv
+from uma.keyjar import init_keyjar
 
 __author__ = 'roland'
 
@@ -113,7 +114,6 @@ def main(base, cookie_handler):
                                   verify_client, "1234567890", keyjar=None,
                                   configuration=as_conf,
                                   base_url=base)
-
 
     cookie_handler.init_srv(AUTHZSRV)
     init_keyjar(AUTHZSRV, KEYS, "static/jwk_as.json")

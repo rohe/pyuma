@@ -103,7 +103,7 @@ def main(base, cookie_handler):
 
     ab = AuthnBroker()
     ab.add("alice", DummyAuthn(None, "alice"))
-    #AB.add("hans", DummyAuthn(None, "hans.granberg@example.org"))
+    ab.add("roger", DummyAuthn(None, "roger"))
     ab.add("UserPwd",
            UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
                                 "%s/authorization" % base),

@@ -10,8 +10,6 @@ from oic.oic import AccessTokenResponse
 
 from oic.utils.authn.user import UserAuthnMethod
 from oic.utils.authn.user import BasicAuthn
-#from oic.utils.authn.user import UsernamePasswordMako
-#from oic.utils.authn.user_cas import CasAuthnMethod
 from oic.utils.authz import Implicit
 from oic.utils.keyio import KeyJar
 from oic.utils.sdb import SessionDB
@@ -27,14 +25,12 @@ from oic.utils.authn.authn_context import AuthnBroker
 from oic.utils.authn.authn_context import UNSPECIFIED
 from oic.utils.authn.authn_context import PASSWORD
 
-from uma.authzsrv import Provider
 from uma.client import Client
 from uma.client import UMA_SCOPE
 from uma.message import ProviderConfiguration, IntrospectionRequest
 from uma.message import ResourceSetDescription
 from uma.message import StatusResponse
 from uma.message import RPTResponse
-from uma.resourcesrv import ResourceServer
 
 __author__ = 'rolandh'
 

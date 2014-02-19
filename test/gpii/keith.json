@@ -1,0 +1,27 @@
+{
+  "http://registry.gpii.org/common/magnification": [
+    { "value": 2.0 }
+  ],
+  "http://registry.gpii.org/common/tracking": [
+    { "value": "mouse" }
+  ],
+  "http://registry.gpii.org/applications/org.gnome.desktop.a11y.magnifier.mouse-tracking": [
+    { "value": "proportional" } // the value "mouse" is not supported by GNOME Magnifier
+  ],
+  "http://registry.gpii.org/applications/org.gnome.desktop.a11y.magnifier.applicationPriority": [
+    { "value": 100 }
+    // "application priority" is not a GNOME Magnifier setting.
+    // Is there a way to use a common term apply to a specific application?
+  ],
+  "http://registry.gpii.org/applications/org.gnome.desktop.a11y.magnifier.show-cross-hairs": [
+    { "value": "true" }
+  ],
+  "http://registry.gpii.org/applications/com.microsoft.windows.screenmagnifier.applicationPriority": [
+    { "value": 0 }
+    // "application priority" is not a GNOME Magnifier setting.
+    // Is there a way to use a common term apply to a specific application?
+  ],
+  "http://registry.gpii.org/applications/com.microsoft.windows.screenmagnifier.MagnifierUIWindowMinimized": [
+    { "value": 0 }
+  ]
+}

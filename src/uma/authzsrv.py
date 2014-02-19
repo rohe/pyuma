@@ -2,6 +2,7 @@ import logging
 import socket
 import traceback
 import sys
+import time
 
 from oic.oauth2.dynreg import Provider as OAUTH2Provider
 from oic.oic.provider import Provider as OIDCProvider
@@ -11,17 +12,17 @@ from oic.oauth2 import TokenErrorResponse
 from oic.oauth2 import rndstr
 from oic.oauth2.provider import Endpoint
 from oic.utils.authn.user import ToOld
-
-from oic.utils.http_util import BadRequest, Created
+from oic.utils.http_util import BadRequest
+from oic.utils.http_util import Created
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import Response
 from oic.utils.keyio import KeyJar
-import time
 #from uma.authzdb import AuthzDB
 
-from uma.message import IntrospectionRequest, AuthzDescription
-from uma.message import AuthorizationDataRequest
 from uma.client import UMA_SCOPE
+from uma.message import IntrospectionRequest
+from uma.message import AuthzDescription
+from uma.message import AuthorizationDataRequest
 from uma.message import IntrospectionResponse
 from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
@@ -81,7 +82,11 @@ class DynamicClientEndpoint(Endpoint):
     etype = "dynamic_client"
 
 
-RSR_PATH = "/%s/resource_set" % ResourceSetRegistrationEndpoint(None).etype
+class AuthorizationDataRequestEndpoint(Endpoint):
+    etype = "authorization_data_request"
+
+
+RSR_PATH = "%s/resource_set/" % ResourceSetRegistrationEndpoint(None).etype
 PLEN = len(RSR_PATH)
 
 def eval_scopes(permission, allow_scopes):
@@ -266,12 +271,18 @@ class Permission(object):
 
         return _remove
 
+    def get_owner_of_request_target(self, requestid):
+        for owner, item in self.db.items():
+            for key, req in item["request"].items():
+                if key == requestid:
+                    return owner
+
 
 class UmaAS(object):
     endp = [ResourceSetRegistrationEndpoint, IntrospectionEndpoint,
             RPTEndpoint, PermissionRegistrationEndpoint,
             AuthorizationRequestEndpoint, UserEndpoint,
-            DynamicClientEndpoint]
+            DynamicClientEndpoint, AuthorizationDataRequestEndpoint]
 
     def __init__(self, configuration=None, baseurl=""):
 
@@ -306,7 +317,7 @@ class UmaAS(object):
 
         # create RPT, just overwrites whatever was there before
         rpt = rndstr(32)
-        self.rpt[rpt] = {"requestor": requestor}
+        self.rpt[rpt] = {"requestor": requestor, "client_id": client_id}
         self.session.set(rpt)
 
         msg = RPTResponse(rpt=rpt)
@@ -329,8 +340,14 @@ class UmaAS(object):
         :returns: A Response instance
         """
         # path should be /resource_set/{rsid}
-        assert path.startswith(RSR_PATH)
-        rsid = path[PLEN:]
+        # Path may or may not start with '/'
+        if path.startswith("/"):
+            assert path[1:].startswith(RSR_PATH)
+            rsid = path[PLEN+1:]
+        else:
+            assert path.startswith(RSR_PATH)
+            rsid = path[PLEN:]
+
         if rsid.startswith("/"):
             rsid = rsid[1:]
 
@@ -421,17 +438,17 @@ class UmaAS(object):
         presented to it by a client.
         """
 
-        logger.info(request)
+        logger.debug(request)
         ir = IntrospectionRequest().from_json(request)
         try:
             _info = self.session.get(ir["token"])
             irep = IntrospectionResponse(
-                active=True,
+                valid=True,
                 expires_at=_info["expires_at"],
             )
             try:
-                requestor = self.rpt[ir["token"]]["requestor"]
-                perms = self.permit.get_accepted(requestor, ir["token"])
+                #requestor = self.rpt[ir["token"]]["requestor"]
+                perms = self.permit.get_accepted(owner, ir["token"])
             except KeyError:
                 pass
             else:
@@ -440,11 +457,11 @@ class UmaAS(object):
                 else:
                     logger.info("No permissions bound to this RPT")
 
-            logger.info("response: %s" % irep.to_json())
+            logger.debug("response: %s" % irep.to_json())
             response = Response(irep.to_json(), content="application/json")
         except ToOld:
             logger.info("RPT expired")
-            irep = IntrospectionResponse(active=False)
+            irep = IntrospectionResponse(valid=False)
             response = Response(irep.to_json(), content="application/json")
         except KeyError:
             response = BadRequest()
@@ -510,15 +527,12 @@ class UmaAS(object):
             _e = endp(None)
             _response[_e.name] = "%s%s" % (self.baseurl, _e.etype)
 
-        logger.info("provider_info_response: %s" % (_response.to_dict(),))
+        logger.debug("provider_info_response: %s" % (_response.to_dict(),))
         return _response
 
     #noinspection PyUnusedLocal
     def providerinfo_endpoint_(self, handle="", **kwargs):
-        _log_debug = logger.debug
-        _log_info = logger.info
-
-        _log_info("@providerinfo_endpoint")
+        logger.debug("@providerinfo_endpoint")
         try:
             _response = self.create_providerinfo()
 
@@ -539,27 +553,28 @@ class UmaAS(object):
 
         return resp
 
-    def authorization_request_endpoint_(self, request="", owner="",
-                                        client_id="", **kwargs):
+    def authorization_data_request_endpoint_(self, request="", requestor="",
+                                             client_id="", **kwargs):
         """
         Registers an Authorization Description
 
         :param request:
-        :param owner: typically user@sp_entity_id
+        :param owner: typically user@requestor
         :param client_id: The UMA client, in essence the IdP
         :return: A Response instance
         """
-        user, requestor = owner.rsplit("@", 1)
 
         adr = AuthorizationDataRequest().from_json(request)
+        owner = self.permit.get_owner_of_request_target(adr["ticket"])
+
         # Get request permission that the resource server has registered
         try:
             permission = AuthzDescription().from_json(
-                self.permit.get_request(user, adr["ticket"]))
+                self.permit.get_request(owner, adr["ticket"]))
         except KeyError:
             return BadRequest()
         else:
-            self.permit.del_request(user, adr["ticket"])
+            self.permit.del_request(owner, adr["ticket"])
 
         # Verify that the scopes are defined for the resource set
         _mid = self.map_rsid_id[permission["resource_set_id"]]
@@ -574,7 +589,7 @@ class UmaAS(object):
         # that it allows what is requested. Return what is allowed !
         try:
             allow_scopes = self.permit.get_permit(
-                user, requestor, permission["resource_set_id"])
+                owner, requestor, permission["resource_set_id"])
         except KeyError:  # This is where a user would be asked in-line
             return BadRequest("No permission given")
 
@@ -591,24 +606,24 @@ class UmaAS(object):
                                 issued_at=now)
 
         self.permit.set_accepted(owner, adr["rpt"], perm)
-        return Response("OK")
+        return Created("")
 
-    def remove_permission(self, owner, sp_entity_id, resource_name):
+    def remove_permission(self, owner, requestor, resource_name):
         """
         :param owner: The resource owner
-        :param sp_entity_id: The SP entity ID
+        :param requestor: The SP entity ID
         :param resource_name: The name of the resource set
         """
         obj = self.resource_set.find(name=resource_name)
         rsid = self.map_id_rsid[obj["_id"]]
 
         try:
-            self.permit.delete_permit(owner, sp_entity_id, rsid)
+            self.permit.delete_permit(owner, requestor, rsid)
         except KeyError:
             pass
 
         try:
-            _user = "%s@%s" % (owner, sp_entity_id)
+            _user = "%s@%s" % (owner, requestor)
             rm_rpt = self.permit.rm_accepted(_user, rsid)
         except KeyError:
             pass
@@ -617,10 +632,11 @@ class UmaAS(object):
                 # immediate expiration
                 self.session.update(_rpt, expires_at=0)
 
-    def store_permission(self, user, sp_entity_id, name, scopes):
+    def store_permission(self, user, requestor, name, scopes):
         """
         :param user:
-        :param sp_entity_id:
+        :param requestor:
+        :param name:
         :param scopes:
         """
         obj = self.resource_set.find(name=name)
@@ -631,9 +647,9 @@ class UmaAS(object):
 
         # If there is some old specification for this combination
         # replace it with this new one.
-        self.remove_permission(user, sp_entity_id, name)
+        self.remove_permission(user, requestor, name)
 
-        self.permit.set_permit(user, sp_entity_id, rsid, scopes)
+        self.permit.set_permit(user, requestor, rsid, scopes)
 
 
 # ----------------------------------------------------------------------------
@@ -709,6 +725,27 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
         return self.resource_set_registration_endpoint_(path, method,
                                                         body, owner, client_id,
                                                         if_match, **kwargs)
+
+    def dynamic_client_endpoint(self, request="", **kwargs):
+        return self.registration_endpoint(request, **kwargs)
+
+    def permission_registration_endpoint(self, request="", authn="", **kwargs):
+        try:
+            owner, client_id = client_authentication(self.sdb, authn)
+        except AuthnFailed:
+            return Unauthorized()
+
+        return self.permission_registration_endpoint_(request, owner,
+                                                      client_id, **kwargs)
+
+    def authorization_data_request_endpoint(self, request="", authn="", **kwargs):
+        try:
+            owner, client_id = client_authentication(self.sdb, authn)
+        except AuthnFailed:
+            return Unauthorized()
+
+        return self.authorization_data_request_endpoint_(request, owner, client_id,
+                                                    **kwargs)
 
 
 class OIDCUmaAS(OIDCProvider, UmaAS):
@@ -817,11 +854,12 @@ class OIDCUmaAS(OIDCProvider, UmaAS):
         return self.permission_registration_endpoint_(request, owner,
                                                       client_id, **kwargs)
 
-    def authorization_request_endpoint(self, request="", authn="", **kwargs):
+    def authorization_data_request_endpoint(self, request="", authn="",
+                                            **kwargs):
         try:
             owner, client_id = client_authentication(self.sdb, authn)
         except AuthnFailed:
             return Unauthorized()
 
-        return self.authorization_request_endpoint_(request, owner, client_id,
-                                                    **kwargs)
+        return self.authorization_data_request_endpoint_(request, owner,
+                                                         client_id, **kwargs)

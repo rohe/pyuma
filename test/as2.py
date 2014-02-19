@@ -139,8 +139,8 @@ def set_permission(environ, session):
             except KeyError:
                 return authenticate(environ, session, "set_permission")
 
-    AUTHZSRV.store_permission(_user, query["sp_entity_id"][0],
-                              query["rsname"][0], query["perm"])
+    AUTHZSRV.store_permission(_user, query["requestor"][0],
+                              query["name"][0], query["perm"])
     return Response("Succeeded"), {}
 
 
@@ -219,8 +219,7 @@ def token(environ, session, query):
         authn_info = ""
     if not query:
         query = get_body(environ)
-    resp = AUTHZSRV.token_endpoint(auth_header=authn_info,
-                                   request=query)
+    resp = AUTHZSRV.token_endpoint(authn=authn_info, request=query)
     #if resp.status == "200 OK":
     #    _dict = json.loads(resp.message)
     #    _idt = IdToken().from_jwt(str(_dict["id_token"]),
@@ -354,6 +353,17 @@ def authorization_request(environ, session, query):
 
 
 #noinspection PyUnusedLocal
+def authorization_data_request(environ, session, query):
+    try:
+        authn_info = environ["HTTP_AUTHORIZATION"]
+    except KeyError:
+        authn_info = ""
+    if not query:
+        query = get_body(environ)
+    return AUTHZSRV.authorization_data_request_endpoint(query, authn_info)
+
+
+#noinspection PyUnusedLocal
 #def openid_provider_configuration(environ, session):
 #    return AUTHZSRV.providerinfo_endpoint()
 
@@ -428,6 +438,7 @@ ENDPOINT2CB = {
     "authorization": oidc_authorization_request,
     "user_info": user_info,
     "userinfo": user_info,
+    "authorization_data_request": authorization_data_request
 }
 
 

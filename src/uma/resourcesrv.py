@@ -1,9 +1,12 @@
 import logging
+import traceback
 from urllib import urlencode
-from urlparse import parse_qs
-from oic.oauth2 import rndstr
+from oic.oauth2 import rndstr, AuthorizationRequest
 from oic.oauth2 import JSON_ENCODED
 from oic.oauth2.provider import Endpoint
+import sys
+from oic.utils import http_util
+from oic.utils.http_util import Response
 from uma.client import Client
 from uma.message import IntrospectionRequest
 from uma.message import IntrospectionResponse
@@ -83,8 +86,6 @@ REQUEST2ENDPOINT = {
 }
 
 DEFAULT_METHOD = "POST"
-
-DESC_BASE = "http://its.umu.se/uma/attr"
 
 
 def create_query(srv, uid, attr=None):
@@ -179,15 +180,17 @@ class ResourceServerBase(object):
                 try:
                     assert resp["permissions"]
                 except (AssertionError, KeyError):
-                    _path = parse_query(environ["PATH_INFO"])
-                    rsid = self.path2rsid[_path]
+                    fpath = self.dataset.filename(resource)
+                    rsid = self.path2rsid[fpath]
 
-                    try:
-                        query = parse_qs(environ["QUERY_STRING"])
-                        _perms = ["%s/%s" % (DESC_BASE, v) for v in
-                                  query["attr"]]
-                    except KeyError:
-                        _perms = [DESC_BASE]
+                    # try:
+                    #     query = parse_qs(environ["QUERY_STRING"])
+                    #     _perms = ["%s/%s" % (DESC_BASE, v) for v in
+                    #               query["attr"]]
+                    # except KeyError:
+                    #     _perms = [DESC_BASE]
+
+                    _perms = [self.dataset.get_necessary_scope(environ)]
 
                     resp = self.register_permission(owner, rsid,
                                                     permissons=_perms)
@@ -195,7 +198,8 @@ class ResourceServerBase(object):
                                          error="Forbidden",
                                          host_id="rs.example.com",
                                          ticket=resp["ticket"]).to_json()
-        return None
+                else:
+                    return resp
 
     def dataset_endpoint(self, request, owner, environ, **kwargs):
         """
@@ -360,11 +364,15 @@ class ResourceServer1C(ResourceServerBase, Client):
                  ca_certs=None, client_authn_method=None, keyjar=None,
                  server_info=None, authz_page="", flow_type="", password=None,
                  registration_info=None, response_type="", scope="",
-                 baseurl=""):
+                 **kwargs):
         ResourceServerBase.__init__(self, dataset, symkey)
         Client.__init__(self, client_id, ca_certs, client_authn_method, keyjar,
                         server_info, authz_page, flow_type, password,
                         registration_info, response_type, scope)
+        self.kwargs = kwargs
+        self.srv_discovery_url = ""
+        self.cookie_handler = http_util.CookieDealer(self)
+        self.cookie_name = "resourceserver1c"
 
     def rs_request_info(self, owner, msgtype, method=DEFAULT_METHOD,
                         authn_method="bearer_header", request_args=None,
@@ -389,7 +397,8 @@ class ResourceServer1C(ResourceServerBase, Client):
         ir = IntrospectionRequest(token=rpt)
 
         if path:
-            ir["resource_id"] = self.path2rsid[path]
+            fpath = self.dataset.filename(path)
+            ir["resource_id"] = self.path2rsid[fpath]
 
         request_args = {"access_token": pat}
         ht_args = self.client_authn_method[
@@ -508,3 +517,74 @@ class ResourceServer1C(ResourceServerBase, Client):
         return self.request_and_return(url, StatusResponse, "GET",
                                        http_args=ht_args)
 
+    def begin(self, environ, start_response, session, acr_value=""):
+        """Step 1: Get a access grant.
+
+        :param environ:
+        :param start_response:
+        :param session:
+        """
+        client = self
+
+        if not self.client_id and self.srv_discovery_url:
+            self.dynamic(self.srv_discovery_url)
+
+        request_args = self.get_request_args(acr_value, session)
+
+        try:
+            url, body, ht_args, csi = self.request_info(
+                AuthorizationRequest, "GET", request_args=request_args)
+        except Exception:
+            message = traceback.format_exception(*sys.exc_info())
+            logger.error(message)
+            return self.result(environ, start_response, (
+                False, "Authorization request can not be performed!"))
+
+        logger.debug("URL: %s" % url)
+        logger.debug("ht_args: %s" % ht_args)
+
+        session["client"] = client
+        resp_headers = [("Location", str(url))]
+
+        if ht_args:
+            resp_headers.extend([(a, b) for a, b in ht_args.items()])
+        logger.debug("resp_headers: %s" % resp_headers)
+        start_response("302 Found", resp_headers)
+        return []
+
+    def get_request_args(self, acr_value, session):
+        """
+        :param acr_value: Authentication Context reference
+        :param session: Session information
+        :return: A set of Authorization request arguments
+        """
+        self.state = rndstr()
+        request_args = {
+            "response_type": self.flow_type,
+            "scope": self.scope,
+            "state": self.state,
+        }
+        if acr_value:
+            request_args["acr_values"] = [acr_value]
+
+        if self.flow_type == "token":
+            request_args["nonce"] = rndstr(16)
+            session["nonce"] = request_args["nonce"]
+        else:
+            use_nonce = getattr(self, "use_nonce", None)
+            if use_nonce:
+                request_args["nonce"] = rndstr(16)
+                session["nonce"] = request_args["nonce"]
+
+        logger.debug("request_args: %s" % (request_args,))
+
+        return request_args
+
+    def result(self, environ, start_response, result):
+        resp = Response(mako_template="opresult.mako",
+                        template_lookup=self.kwargs["template_lookup"],
+                        headers=[])
+        argv = {
+            "result": result
+        }
+        return resp(environ, start_response, **argv)

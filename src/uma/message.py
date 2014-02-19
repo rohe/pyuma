@@ -168,6 +168,10 @@ class PermissionRegistrationResponse(Message):
     c_param = {"ticket": SINGLE_REQUIRED_STRING}
 
 
+class RPTRequest(Message):
+    c_param = {}
+
+
 class RPTResponse(Message):
     c_param = {"rpt": SINGLE_REQUIRED_STRING}
 
@@ -175,6 +179,19 @@ class RPTResponse(Message):
 class AuthorizationDataRequest(Message):
     c_param = {"rpt": SINGLE_REQUIRED_STRING,
                "ticket": SINGLE_REQUIRED_STRING}
+
+
+class AuthorizationDataResponse(Message):
+    c_param = {"rpt": SINGLE_OPTIONAL_STRING}
+
+
+class ErrorResponse(Message):
+    c_param = {
+        "status": SINGLE_REQUIRED_STRING,
+        "error": SINGLE_REQUIRED_STRING,
+        "error_description": SINGLE_OPTIONAL_STRING,
+        "error_uri": SINGLE_OPTIONAL_STRING
+    }
 
 
 MSG = {
@@ -185,8 +202,11 @@ MSG = {
     "IntrospectionRequest": IntrospectionRequest,
     "IntrospectionResponse": IntrospectionResponse,
     "PermissionRegistrationRequest": PermissionRegistrationRequest,
+    "PermissionRegistrationResponse": PermissionRegistrationResponse,
     "RPTResponse": RPTResponse,
-    "AuthorizationDataRequest": AuthorizationDataRequest
+    "RPTRequest": RPTRequest,
+    "AuthorizationDataRequest": AuthorizationDataRequest,
+    "AuthorizationDataResponse": AuthorizationDataResponse
 }
 
 

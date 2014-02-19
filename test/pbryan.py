@@ -1,17 +1,20 @@
 #!/usr/bin/env python
 import base64
 import hashlib
+import json
 import logging
+from mako.lookup import TemplateLookup
+from oic.utils.authn.user import UsernamePasswordMako
 import requests
 
 from urlparse import parse_qs
 from cherrypy import wsgiserver
 
+from oic.oauth2.message import Message
 from oic.oauth2.message import AuthorizationResponse
 from oic.utils.http_util import Response
 from oic.utils.http_util import Forbidden
 from oic.utils.http_util import CookieDealer
-from oic.utils.http_util import InvalidCookieSign
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import NotFound
@@ -21,7 +24,6 @@ from uma.message import PermissionRegistrationResponse
 from uma.resourcesrv import Unknown
 from uma.saml2uma import ErrorResponse
 from uma.resourcesrv import UnknownAuthzSrv
-from uma.json_resource_server import JsonResourceServer
 import uma_rs
 
 __author__ = 'rolandh'
@@ -47,7 +49,7 @@ KEYS = {
 RES_SRV = None
 CookieHandler = CookieDealer(None)
 COOKIE_NAME = "rs_uma"
-DATASET = None
+AUTHN = None
 
 # -----------------------------------------------------------------------------
 
@@ -102,7 +104,7 @@ def static(environ, session, path):
 
 def opbyuid(environ, start_response):
     resp = Response(mako_template="opbyuid.mako",
-                    template_lookup=uma_rs.LOOKUP,
+                    template_lookup=LOOKUP,
                     headers=[])
 
     return resp(environ, start_response)
@@ -111,18 +113,19 @@ def opbyuid(environ, start_response):
 # =============================================================================
 
 def application(environ, start_response):
-    session = {}
-    try:
-        cookie = environ["HTTP_COOKIE"]
-        try:
-            _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
-        except InvalidCookieSign:
-            pass
-        else:
-            if _tmp:
-                session = eval(_tmp[0])
-    except KeyError:
-        pass
+    session = environ['beaker.session']
+
+    # try:
+    #     cookie = environ["HTTP_COOKIE"]
+    #     try:
+    #         _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
+    #     except InvalidCookieSign:
+    #         pass
+    #     else:
+    #         if _tmp:
+    #             session = eval(_tmp[0])
+    # except KeyError:
+    #     pass
 
     path = environ.get('PATH_INFO', '').lstrip('/')
 
@@ -143,19 +146,25 @@ def application(environ, start_response):
     if query:
         logger.info("Query: %s" % (query,))
 
+    resp = None
+
     if path == "":
         return opbyuid(environ, start_response)
-    elif path == "rp":
+    elif path == "rp":  # has to be authenticated for this
         link = acr = ""
         if "uid" in query:
-            try:
-                link = RES_SRV.find_srv_discovery_url(resource=query["uid"][0])
-            except requests.ConnectionError:
-                resp = ServiceError("Webfinger lookup failed, connection error")
-                return resp(environ, start_response)
-        elif "url" in query:
-            link = query["url"][0]
+            session["uid"] = query["uid"][0]
+            if not "url" in query:
+                try:
+                    link = RES_SRV.find_srv_discovery_url(
+                        resource=query["uid"][0])
+                except requests.ConnectionError:
+                    resp = ServiceError(
+                        "Webfinger lookup failed, connection error")
+                    return resp(environ, start_response)
 
+        if "url" in query:
+            link = query["url"][0]
         if "acr" in query:
             acr = query["acr"][0]
 
@@ -170,15 +179,14 @@ def application(environ, start_response):
                         acr_value=acr)
         else:
             resp = BadRequest()
-            return resp(environ, start_response)
     elif path.startswith("info"):
         try:
-            owner = DATASET.get_owner(path)
+            owner = RES_SRV.dataset.get_owner(path)
         except Unknown:  # Means not owned by someone, so just return
-            return DATASET.do_get(path)
+            return RES_SRV.dataset.do_get(path)
 
         try:
-            resp = RES_SRV.dataset_access(owner, environ)
+            jresp = RES_SRV.dataset_access(owner, environ, path)
         except Unknown:
             resp = BadRequest("Unknown user: %s" % owner)
             return resp(environ, start_response)
@@ -188,11 +196,19 @@ def application(environ, start_response):
         except KeyError, err:
             resp = BadRequest("Missing info: %s" % err)
             return resp(environ, start_response)
+        except Exception, err:
+            pass
+        else:
+            if isinstance(jresp, Message):
+                resp = jresp
+            else:
+                resp = json.loads(jresp)
 
         # either a ErrorResponse or a ResourceResponse
-        if isinstance(resp, ErrorResponse):
+        if "error" in resp:
             try:
-                resp.verify()
+                err_resp = ErrorResponse(**resp)
+                err_resp.verify()
             except Exception:
                 resp = ServiceError()
                 return resp(environ, start_response)
@@ -212,44 +228,34 @@ def application(environ, start_response):
                 resp = Unauthorized(headers=headers)
         else:  # Got some permission, let the data set do it's thing
             try:
-                resp = DATASET.do(resp["permissions"], path, environ)
-            except Exception:
-                resp = BadRequest()
-                return resp(environ, start_response)
-
-        return resp(environ, start_response)
-
-    resp = None
-    if path in RES_SRV.oic_client:
-        # back after the authorization at the AS
-        # Should provide an authorization code which means I can get the access
-        # token
-        aresp = AuthorizationResponse().from_urlencoded(environ["QUERY_STRING"])
-        _cli = RES_SRV.oic_client[path]
-        uid = _cli.acquire_access_token(aresp, "PAT")
-        session["userid"] = uid
-
-        # The RS registering Alice's resources
-        RES_SRV.authz_registration(uid, _cli.token[uid]["PAT"],
-                                   _cli.provider_info.keys()[0],
-                                   path)
-        # get user info
-        #_pat = _cli.token[uid]["PAT"]
-        #uinfo = _cli.do_user_info_request(request="openid email contact",
-        #                                  token=_pat["access_token"],
-        #                                  behavior="use_authorization_header",
-        #                                  token_type=_pat["token_type"])
-        # build resource_set_description
-
-        descs = DATASET.build_resource_set_description(uid)
-        logger.info("Resource set descriptions: %s" % (descs,))
-        for desc in descs:
-            try:
-                RES_SRV.register_resource_set_description(uid, desc.to_json(),
-                                                          uid)
+                resp = RES_SRV.dataset.do(path, environ, resp)
             except Exception, err:
-                raise
+                resp = BadRequest()
+    elif path == "uma":  # Back after verified authentication
+        aresp = RES_SRV.parse_authz_response(environ["QUERY_STRING"])
+        # get access token
+        accresp = RES_SRV.do_access_token_request()
+        uid = session["uid"]
+        RES_SRV.authz_registration(uid, accresp,
+                                   RES_SRV.provider_info.keys()[0], "")
+        if isinstance(aresp, AuthorizationResponse):
+            # time to register some resource sets
+            descs = RES_SRV.dataset.build_resource_set_description(uid)
+            logger.info("Resource set descriptions: %s" % (descs,))
+            for path, desc in descs:
+                try:
+                    RES_SRV.register_resource_set_description(uid,
+                                                              desc.to_json(),
+                                                              path)
+                except Exception, err:
+                    raise
 
+            resp = Response("OK")
+        else:
+            resp = BadRequest(aresp.to_json(), content="application/json")
+    elif path == "login":  # local login
+        resp = Response("OK")
+    elif path == "verify":  # verify local login
         resp = Response("OK")
 
     if not resp:
@@ -259,6 +265,17 @@ def application(environ, start_response):
     return resp(environ, start_response)
 
 # -----------------------------------------------------------------------------
+ROOT = './'
+LOOKUP = TemplateLookup(directories=[ROOT + 'templates', ROOT + 'htdocs'],
+                        module_directory=ROOT + 'modules',
+                        input_encoding='utf-8', output_encoding='utf-8')
+
+PASSWD = {
+    "alice": "krall",
+    "hans": "thetake",
+    "user": "howes",
+    "https://sp.example.org/": "code"
+}
 
 
 if __name__ == '__main__':
@@ -267,8 +284,10 @@ if __name__ == '__main__':
     #args = parser.parse_args()
     #
     #sys.path.insert(0, ".")
+    from beaker.middleware import SessionMiddleware
 
     PORT = 8089
+    #HOST = "https://lingon.catalogix.se:%s" % PORT
     HOST = "https://localhost:%s" % PORT
 
     SERVER_CERT = "pki/server.crt"
@@ -276,12 +295,24 @@ if __name__ == '__main__':
     CA_BUNDLE = None
     ROOT = "resources"
 
-    DATASET = JsonResourceServer(ROOT, "info", HOST)
+    #DATASET = JsonResourceServer(ROOT, "info", HOST)
+
+    AUTHN = UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
+                                 "%sauthorization" % HOST)
 
     # The UMA RS
     RES_SRV = uma_rs.main(HOST, CookieHandler)
 
-    SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
+    session_opts = {
+        'session.type': 'memory',
+        'session.cookie_expires': True,
+        #'session.data_dir': './data',
+        'session.auto': True,
+        'session.timeout': 900
+    }
+
+    SRV = wsgiserver.CherryPyWSGIServer(
+        ('0.0.0.0', PORT), SessionMiddleware(application, session_opts))
 
     if HOST.startswith("https"):
         from cherrypy.wsgiserver import ssl_pyopenssl

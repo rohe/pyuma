@@ -1,3 +1,4 @@
+import logging
 import urllib
 from oic.oauth2 import rndstr
 from oic.oauth2.exception import MissingSession
@@ -5,12 +6,18 @@ from oic.oauth2 import dynreg
 from oic.oic.message import ProviderConfigurationResponse
 from oic.utils.authn.authn_context import PASSWORD
 from uma.message import AuthorizationDataRequest
+from uma.message import IntrospectionRequest
+from uma.message import PermissionRegistrationRequest
+from uma.message import ProviderConfiguration
 from uma.message import RPTResponse
 from uma import UMAError
 from uma import AAT
 from uma import PAT
+from uma.message import RPTRequest
 
 __author__ = 'rolandh'
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionFailure(Exception):
@@ -51,6 +58,9 @@ class Client(dynreg.Client):
             DEF_SIGN_ALG["openid_request_object"]}
 
         self.registration_info = registration_info
+        self.flow_type = flow_type
+        self.scope = scope
+        self.state = []
         self.allow = {}
         self.state = ""
         self.keyjar = None
@@ -62,8 +72,8 @@ class Client(dynreg.Client):
             "ResourceSetDescription": "resource_set_registration_endpoint",
             "IntrospectionRequest": "introspection_endpoint",
             "PermissionRegistrationRequest": "permission_registration_endpoint",
-            "AuthorizationDataRequest": "authorization_request_endpoint",
-            "": "rpt_endpoint"
+            "AuthorizationDataRequest": "authorization_data_request_endpoint",
+            "RPTRequest": "rpt_endpoint"
         })
 
     def init_relationship(self, provider_url):
@@ -185,21 +195,21 @@ class Client(dynreg.Client):
         _aat = self.token[userid]["AAT"]["access_token"]
         kwargs = {"headers": {"Authorization": "Bearer %s" % _aat},
                   "data": adr.to_json()}
-        url = self.provider_info.values()[0]["authorization_request_endpoint"]
-        return url, kwargs
+        return kwargs
 
     def authorization_data_request(self, userid, ticket):
-        url, kwargs = self.create_authorization_data_request(userid, ticket)
+        kwargs = self.create_authorization_data_request(userid, ticket)
+        url = self.provider_info.values()[0]["authorization_request_endpoint"]
         return self.send(url, "POST", **kwargs)
 
     def create_rpt_request(self, user):
         _aat = self.token[user]["AAT"]["access_token"]
         kwargs = {"headers": {"Authorization": "Bearer %s" % _aat}}
-        url = self.provider_info.values()[0]["rpt_endpoint"]
-        return url, kwargs
+        return kwargs
 
     def get_rpt(self, user):
-        url, kwargs = self.create_rpt_request(user)
+        kwargs = self.create_rpt_request(user)
+        url = self.provider_info.values()[0]["rpt_endpoint"]
         resp = self.send(url, "POST", **kwargs)
 
         if resp.status_code == 200:
@@ -208,5 +218,41 @@ class Client(dynreg.Client):
         else:
             raise UMAError(resp.reason)
 
+    def construct_RPTRequest(self, request=RPTRequest, request_args=None,
+                             extra_args=None, **kwargs):
+
+        return self.construct_request(request, request_args, extra_args)
+
+    def construct_IntrospectionRequest(self, request=IntrospectionRequest,
+                                       request_args=None, extra_args=None,
+                                       **kwargs):
+        return self.construct_request(request, request_args, extra_args)
+
+    def construct_PermissionRegistrationRequest(
+            self, request=PermissionRegistrationRequest, request_args=None,
+            extra_args=None, **kwargs):
+        return self.construct_request(request, request_args, extra_args)
+
+    def construct_AuthorizationDataRequest(
+            self, request=AuthorizationDataRequest, request_args=None,
+            extra_args=None, **kwargs):
+        return self.construct_request(request, request_args, extra_args)
+
     def match_preferences(self, pcr=None, issuer=None):
         pass
+
+    def dynamic(self, authsrv):
+        """ Do dynamic provider information gathering and client registration
+
+        :param authsrv: Authorization Server URL
+        """
+        # Dynamically read server info
+        provider_conf = self.provider_config(authsrv,
+                                             response_cls=ProviderConfiguration,
+                                             serv_pattern=UMACONF_PATTERN)
+        dce = provider_conf["dynamic_client_endpoint"]
+        logger.debug("Got provider config: %s" % provider_conf)
+
+        logger.debug("Registering RP")
+        reg_info = self.register(dce, **self.registration_info)
+        logger.debug("Registration response: %s" % reg_info)

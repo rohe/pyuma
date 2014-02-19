@@ -43,7 +43,18 @@ class JsonResourceServer():
         self.index = {}  # keys are owners, values are resource index
         if owners:
             for owner in owners:
-                self.index[owner] = 0
+                self.index[owner] = self.get_index(owner)
+
+    def get_index(self, owner):
+        _path = os.path.join(self.root, owner)
+        i = 0
+        if os.path.exists(_path):
+            for _p in os.listdir(_path):
+                if int(_p) > i:
+                    i = int(_p)
+        else:
+            os.mkdir(_path)
+        return i
 
     def filename(self, path):
         """
@@ -59,21 +70,22 @@ class JsonResourceServer():
         return name.replace(self.root, self.base, 1)
 
     @staticmethod
-    def check_permission(permission, oper):
+    def check_permission(authzdesc, oper):
         """
-
+        :param authzdesc: An AuthzDescription instance
+        :param oper: The operation (HTTP method)
         """
         now = utc_time_sans_frac()
         try:
-            assert now < permission["expires_at"]
+            assert now < authzdesc["expires_at"]
         except KeyError:
             pass
         except AssertionError:
             return False
 
-        for perm in permission["permissions"]:
+        for perm in authzdesc["permissions"]:
             try:
-                assert now < permission["expires_at"]
+                assert now < perm["expires_at"]
             except KeyError:
                 pass
             except AssertionError:
@@ -87,6 +99,19 @@ class JsonResourceServer():
                 return True
 
         return False
+
+    # def check_permission(self, permission, oper):
+    #     """
+    #     :param permission: One or a list of AuthzDescription instances
+    #     :param oper: The operation (HTTP method)
+    #     """
+    #     if isinstance(permission, list):
+    #         for perm in permission:
+    #             if self._check_permission(perm, oper):
+    #                 return True
+    #         return False
+    #     else:
+    #         return self._check_permission(permission, oper)
 
     def do_get(self, path):
         """
@@ -348,3 +373,7 @@ class JsonResourceServer():
             changetype = ["add", "update", "delete"]
         """
         pass
+
+    @staticmethod
+    def get_necessary_scope(environ):
+        return OPER2SCOPE[environ["REQUEST_METHOD"]]
