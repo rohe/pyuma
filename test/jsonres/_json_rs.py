@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from oic.utils.authn.client import ClientSecretBasic
 from oic.utils.authn.client import BearerHeader
 
@@ -14,24 +15,6 @@ KEYS = {
         "usage": ["enc", "sig"]
     }
 }
-
-# USERDB = {
-#     "hans": {
-#         "displayName": "Hans Granberg",
-#         "givenName": "Hans",
-#         "sn": "Granberg",
-#         "eduPersonNickname": "Hasse",
-#         "email": "hans@example.org",
-#     },
-#     "linda": {
-#         "displayName": "Linda Lindgren",
-#         "eduPersonNickname": "Linda",
-#         "givenName": "Linda",
-#         "sn": "Lindgren",
-#         "email": "linda@example.com",
-#         "uid": "linda"
-#     }
-# }
 
 RES_SRV = None
 RP = None
@@ -58,9 +41,6 @@ def main(baseurl, cookie_handler):
         "scope": PAT
     }
 
-    #gpii_url = "%s/gpii" % config["base_url"]
-    #dataset = IdmUserInfo(USERDB, gpii_url=gpii_url,
-    #                      symkey="abcdefghijklmnopqrst")
     dataset = JsonResourceServer(root="resources", base="info", baseurl=baseurl,
                                  owners=["alice"])
     res_srv = ResourceServer1C(dataset, **config)

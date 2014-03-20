@@ -28,13 +28,13 @@ from uma.resourcesrv import Unknown
 from uma.saml2uma import ErrorResponse
 from uma.saml2uma import ResourceResponse
 from uma.resourcesrv import UnknownAuthzSrv
-import uma_rs
-from uma_rs import build_description
+
+import rs
 
 __author__ = 'rolandh'
 
 logger = logging.getLogger("")
-LOGFILE_NAME = 'uma_rs.log'
+LOGFILE_NAME = 'rs.log'
 hdlr = logging.FileHandler(LOGFILE_NAME)
 base_formatter = logging.Formatter(
     "%(asctime)s %(name)s:%(levelname)s %(message)s")
@@ -55,6 +55,8 @@ RES_SRV = None
 RP = None
 CookieHandler = CookieDealer(None)
 COOKIE_NAME = "rs_uma"
+
+COMPLEX = True
 
 
 def get_body(environ):
@@ -107,10 +109,10 @@ def static(environ, session, path):
 
 def opbyuid(environ, start_response):
     resp = Response(mako_template="opbyuid.mako",
-                    template_lookup=uma_rs.LOOKUP,
+                    template_lookup=rs.LOOKUP,
                     headers=[])
 
-    return resp(environ, start_response)
+    return resp
 
 
 #noinspection PyUnusedLocal
@@ -202,12 +204,11 @@ def application(environ, start_response):
             pass
         else:
             if _tmp:
-                session = eval(_tmp[0])
+                session = json.loads(_tmp[0])
     except KeyError:
         pass
 
     path = environ.get('PATH_INFO', '').lstrip('/')
-
     logger.info("PATH: %s" % path)
     if session:
         logger.info("Session: %s" % (session,))
@@ -225,21 +226,29 @@ def application(environ, start_response):
     if query:
         logger.info("Query: %s" % (query,))
 
-    if path == "":
-        return opbyuid(environ, start_response)
-    elif path == "rp":
+    resp = None
+    if path == "":  #?user=<rs_uid>
+        resp = opbyuid(environ, start_response)
+        _val = {"uid": query["user"][0]}
+        resp.headers.append(CookieHandler.create_cookie(
+            json.dumps(_val), "uma_rs", cookie_name=COOKIE_NAME))
+        return resp(environ, start_response)
+    elif path == "rp":  # Authenticating the user and binding the RS to the AS
         link = acr = ""
         if "uid" in query:
             try:
-                link = RES_SRV.find_srv_discovery_url(resource=query["uid"][0])
+                link = RES_SRV.find_srv_discovery_url(
+                    resource=query["uid"][0])
             except requests.ConnectionError:
                 resp = ServiceError("Webfinger lookup failed, connection error")
                 return resp(environ, start_response)
         elif "url" in query:
             link = query["url"][0]
 
-        if "acr" in query:
-            acr = query["acr"][0]
+        if "acr_values" in query:
+            acr = query["acr_values"][0]
+        else:
+            acr = query["uid"][0].split("@")[0]  # The userid
 
         if link:
             RES_SRV.srv_discovery_url = link
@@ -258,9 +267,8 @@ def application(environ, start_response):
         # info/<uid>/<bundle>[?attr=<attribute>[&attr=<attribute>]] or
         # info/<uid>[?attr=<attribute>[&attr=<attribute>]]
         owner = path[5:]
-        owner = owner.replace("--", "@")
         try:
-            res = RES_SRV.dataset_endpoint(query, owner, environ)
+            res = RES_SRV.dataset_endpoint(path, owner, environ)
         except Unknown:
             resp = BadRequest("Unknown user: %s" % owner)
             return resp(environ, start_response)
@@ -294,39 +302,39 @@ def application(environ, start_response):
             resp = Response(rr.to_json())
 
         return resp(environ, start_response)
-
-    resp = None
-    if path in RES_SRV.oic_client:
+    elif path == "uma":
         # back after the authorization at the AS
         # Should provide an authorization code which means I can get the access
         # token
         aresp = AuthorizationResponse().from_urlencoded(environ["QUERY_STRING"])
-        _cli = RES_SRV.oic_client[path]
-        uid = _cli.acquire_access_token(aresp, "PAT")
-        session["userid"] = uid
+        #_cli = RES_SRV.oic_client[path]
+        _cli = RES_SRV
+        uid = _cli.acquire_access_token(aresp, "PAT", session["uid"])
 
         # The RS registering Alice's resources
         RES_SRV.authz_registration(uid, _cli.token[uid]["PAT"],
                                    _cli.provider_info.keys()[0],
                                    path)
-        # get user info
-        #_pat = _cli.token[uid]["PAT"]
-        #uinfo = _cli.do_user_info_request(request="openid email contact",
-        #                                  token=_pat["access_token"],
-        #                                  behavior="use_authorization_header",
-        #                                  token_type=_pat["token_type"])
-        # build resource_set_description
-        user_info = RES_SRV.dataset(uid)
-        _hash = hashlib.sha224(json.dumps(user_info)).hexdigest()
-        desc = build_description(uid, user_info)
-        logger.info("Resource set description: %s" % (desc,))
-        try:
-            RES_SRV.register_resource_set_description(uid, desc.to_json(), uid,
-                                                      _hash)
-        except Exception, err:
-            raise
 
-        resp = Response("OK")
+        #user_info = RES_SRV.dataset[uid]
+        #_hash = hashlib.sha224(json.dumps(user_info)).hexdigest()
+
+        desc = RES_SRV.dataset.build_resource_set_description(uid)
+        logger.info("Resource set description: %s" % (desc,))
+        for rset in desc:
+            if COMPLEX:
+                    RES_SRV.register_complex_resource_set_description(
+                        uid, rset.to_json(), "info/%s" % uid)
+            else:
+                try:
+                    RES_SRV.register_resource_set_description(uid,
+                                                              rset.to_json(),
+                                                              "info/%s" % uid)
+                except Exception, err:
+                    raise
+
+        resp = Response(
+            "The connection between the RS and the AS was established")
 
     if not resp:
         for regex, callback in URLS:
@@ -353,18 +361,12 @@ def application(environ, start_response):
 
 
 if __name__ == '__main__':
-    #parser = argparse.ArgumentParser()
-    #parser.add_argument(dest="config")
-    #args = parser.parse_args()
-    #
-    #sys.path.insert(0, ".")
-
-    SERVER_CERT = "pki/server.crt"
-    SERVER_KEY = "pki/server.key"
+    SERVER_CERT = "../pki/server.crt"
+    SERVER_KEY = "../pki/server.key"
     CA_BUNDLE = None
 
     # The UMA RS
-    RES_SRV = uma_rs.main(HOST, CookieHandler)
+    RES_SRV = rs.main(HOST, CookieHandler)
 
     SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 

@@ -13,7 +13,7 @@ from oic.utils.http_util import BadRequest
 from oic.utils.http_util import NotFound
 from oic.utils.webfinger import WebFinger, OIC_ISSUER
 from uma.resource_set import UnknownObject
-import uma_as2
+import as_base
 
 __author__ = 'rolandh'
 
@@ -88,7 +88,7 @@ def edit_permission_form(uid, resource_name, scopes, entity_id, checked=None):
     headers = [CookieHandler.create_cookie("%s" % (cval,), "sso", COOKIE_NAME)]
 
     resp = Response(mako_template="permissions.mako",
-                    template_lookup=uma_as2.LOOKUP,
+                    template_lookup=as_base.LOOKUP,
                     headers=headers)
     if checked is None:
         checked = {}
@@ -133,7 +133,7 @@ def set_permission(environ, session):
         except KeyError:
             try:
                 authn_info = environ["HTTP_AUTHORIZATION"]
-                ident = BasicAuthn(AUTHZSRV, uma_as2.PASSWD).authenticated_as(
+                ident = BasicAuthn(AUTHZSRV, as_base.PASSWD).authenticated_as(
                     authorization=authn_info)
                 _user = ident["uid"]
             except KeyError:
@@ -146,7 +146,7 @@ def set_permission(environ, session):
 
 def authenticate(environ, session, operation):
     resp = Response(mako_template="login.mako",
-                    template_lookup=uma_as2.LOOKUP,
+                    template_lookup=as_base.LOOKUP,
                     headers=[])
 
     argv = {
@@ -177,7 +177,7 @@ def authn(environ, session):
         query = parse_qs(environ["QUERY_STRING"])
 
     try:
-        assert uma_as2.PASSWD[query["login"][0]] == query["password"][0]
+        assert as_base.PASSWD[query["login"][0]] == query["password"][0]
     except (KeyError, AssertionError):
         return Unauthorized(), {}
 
@@ -409,7 +409,7 @@ def manage(uid, headers=None):
     if headers is None:
         headers = []
 
-    resp = Response(mako_template="manage.mako", template_lookup=uma_as2.LOOKUP,
+    resp = Response(mako_template="manage.mako", template_lookup=as_base.LOOKUP,
                     headers=headers)
 
     res_set = AUTHZSRV.resource_sets_by_user(uid)
@@ -618,7 +618,7 @@ if __name__ == '__main__':
     SPS = get_sp("./sp/sp.xml")
 
     # The UMA AS
-    AUTHZSRV = uma_as2.main(BASE, CookieHandler)
+    AUTHZSRV = as_base.main(BASE, CookieHandler)
 
     SRV = wsgiserver.CherryPyWSGIServer(('0.0.0.0', PORT), application)
 

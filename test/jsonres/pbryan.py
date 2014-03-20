@@ -24,12 +24,12 @@ from uma.message import PermissionRegistrationResponse
 from uma.resourcesrv import Unknown
 from uma.saml2uma import ErrorResponse
 from uma.resourcesrv import UnknownAuthzSrv
-import uma_rs
+import rs
 
 __author__ = 'rolandh'
 
 logger = logging.getLogger("")
-LOGFILE_NAME = 'uma_rs.log'
+LOGFILE_NAME = 'rs.log'
 hdlr = logging.FileHandler(LOGFILE_NAME)
 base_formatter = logging.Formatter(
     "%(asctime)s %(name)s:%(levelname)s %(message)s")
@@ -290,8 +290,8 @@ if __name__ == '__main__':
     #HOST = "https://lingon.catalogix.se:%s" % PORT
     HOST = "https://localhost:%s" % PORT
 
-    SERVER_CERT = "pki/server.crt"
-    SERVER_KEY = "pki/server.key"
+    SERVER_CERT = "../pki/server.crt"
+    SERVER_KEY = "../pki/server.key"
     CA_BUNDLE = None
     ROOT = "resources"
 
@@ -301,7 +301,7 @@ if __name__ == '__main__':
                                  "%sauthorization" % HOST)
 
     # The UMA RS
-    RES_SRV = uma_rs.main(HOST, CookieHandler)
+    RES_SRV = rs.main(HOST, CookieHandler)
 
     session_opts = {
         'session.type': 'memory',
