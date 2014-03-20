@@ -50,7 +50,8 @@ class OIDCProviderConfiguration(ProviderConfigurationResponse):
 class Scope(Message):
     c_param = {
         "name": SINGLE_REQUIRED_STRING,
-        "icon_uri": SINGLE_OPTIONAL_STRING
+        "icon_uri": SINGLE_OPTIONAL_STRING,
+        "subscopes": OPTIONAL_LIST_OF_STRINGS
     }
 
 
@@ -80,7 +81,8 @@ class ResourceSetDescription(Message):
         "type": SINGLE_OPTIONAL_STRING,
         "member": OPTIONAL_MESSAGE,
         "_id": SINGLE_OPTIONAL_STRING,
-        "_rev": SINGLE_OPTIONAL_STRING
+        "_rev": SINGLE_OPTIONAL_STRING,
+        "subsets": OPTIONAL_LIST_OF_STRINGS
     }
 
 

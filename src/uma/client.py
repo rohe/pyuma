@@ -41,14 +41,15 @@ class Client(dynreg.Client):
     def __init__(self, client_id=None, ca_certs=None,
                  client_authn_method=None, keyjar=None,
                  server_info=None, authz_page="", flow_type="", password=None,
-                 registration_info=None, response_type="", scope=""):
+                 registration_info=None, response_type="", scope="",
+                 verify_ssl=True):
 
         config = {"authz_page": authz_page,
                   "response_type": response_type,
                   "scope": scope}
 
         dynreg.Client.__init__(self, client_id, ca_certs, client_authn_method,
-                               keyjar)
+                               keyjar, verify_ssl)
 
         self.provider_info = {}
         # token per user
@@ -60,9 +61,8 @@ class Client(dynreg.Client):
         self.registration_info = registration_info
         self.flow_type = flow_type
         self.scope = scope
-        self.state = []
+        self.state = {}
         self.allow = {}
-        self.state = ""
         self.keyjar = None
         self.client_id = ""
         self.client_secret = ""
@@ -109,7 +109,8 @@ class Client(dynreg.Client):
     def acquire_grant(self, resource_server, token_type, userid, state="",
                       acr=PASSWORD):
         """
-        Get a grant by which a PAT/AAT token can be acquired from the server
+        Get a grant by which a PAT/AAT token later can be acquired from the
+        server
 
         :param resource_server: The OP to use
         :param token_type: Which kind of token to acquire
@@ -122,7 +123,8 @@ class Client(dynreg.Client):
             self.token[userid] = {}
             token_type = "AAT"  # The first one I must have
         elif token_type == "RPT" and not "AAT" in self.token[userid]:
-            token_type = "AAT"  # Must have AAT first
+            # Must have AAT first
+            self.acquire_grant(resource_server, "AAT", userid, state, acr)
 
         self.init_relationship(resource_server)
 
@@ -179,8 +181,8 @@ class Client(dynreg.Client):
                                               state=aresp["state"],
                                               keyjar=self.keyjar)
 
-        if not uid:
-            uid = atresp["id_token"]["sub"]
+        #if not uid:
+        #    uid = atresp["id_token"]["sub"]
 
         try:
             self.token[uid][token_type] = atresp

@@ -217,13 +217,14 @@ class Permission(object):
             self.init_owner(owner)
 
         _perm = self.db[owner]["permit"]
+
         try:
             _perm[requestor][resource_id] = scopes
         except KeyError:
             try:
                 _perm[requestor] = {resource_id: scopes}
             except KeyError:
-                _perm = {requestor: {resource_id: scopes}}
+                self.db[owner]["permit"] = {requestor: {resource_id: scopes}}
 
     def get_permit(self, owner, requestor, resource_id):
         return self.db[owner]["permit"][requestor][resource_id]
@@ -255,7 +256,7 @@ class Permission(object):
         try:
             _acc[rpt] = authz_desc
         except KeyError:
-            _acc = {rpt: authz_desc}
+            self.db[owner]["accepted"] = {rpt: authz_desc}
 
     def get_accepted(self, owner, rpt):
         return self.db[owner]["accepted"][rpt]
@@ -416,7 +417,7 @@ class UmaAS(object):
         for _id in self.map_user_id[user]:
             try:
                 res.append(self.resource_set.read(_id))
-            except Exception, err:
+            except Exception:
                 raise
 
         return res
@@ -432,13 +433,13 @@ class UmaAS(object):
     def authz_session_info(self, token):
         pass
 
-    def introspection_endpoint_(self, request="", owner="", **kwargs):
+    def introspection_endpoint_(self, request="", requestor="", **kwargs):
         """
         The endpoint URI at which the resource server introspects an RPT
         presented to it by a client.
         """
 
-        logger.debug(request)
+        logger.debug("requestor: %s, request: %s" % (requestor, request))
         ir = IntrospectionRequest().from_json(request)
         try:
             _info = self.session.get(ir["token"])
@@ -448,7 +449,7 @@ class UmaAS(object):
             )
             try:
                 #requestor = self.rpt[ir["token"]]["requestor"]
-                perms = self.permit.get_accepted(owner, ir["token"])
+                perms = self.permit.get_accepted(requestor, ir["token"])
             except KeyError:
                 pass
             else:
@@ -468,7 +469,7 @@ class UmaAS(object):
 
         return response
 
-    def permission_registration_endpoint_(self, request="", owner="",
+    def permission_registration_endpoint_(self, request="", requestor="",
                                           client_id="", **kwargs):
         """
         The endpoint URI at which the resource server registers a
@@ -476,9 +477,9 @@ class UmaAS(object):
         This is a proposed permission waiting for the user to accept it.
         """
         _ticket = rndstr(24)
-        logging.debug("Registring permission request: %s" % request)
+        logging.debug("Registering permission request: %s" % request)
         resp = PermissionRegistrationResponse(ticket=_ticket)
-        self.permit.add_request(owner, _ticket, request)
+        self.permit.add_request(requestor, _ticket, request)
 
         return Created(resp.to_json(), content="application/json")
 
@@ -559,7 +560,7 @@ class UmaAS(object):
         Registers an Authorization Description
 
         :param request:
-        :param owner: typically user@requestor
+        :param requestor:
         :param client_id: The UMA client, in essence the IdP
         :return: A Response instance
         """
@@ -588,8 +589,9 @@ class UmaAS(object):
         # Is there any permissions registered by the owner, if so verify
         # that it allows what is requested. Return what is allowed !
         try:
+            sp_entity_id = requestor.split("@")[1]
             allow_scopes = self.permit.get_permit(
-                owner, requestor, permission["resource_set_id"])
+                owner, sp_entity_id, permission["resource_set_id"])
         except KeyError:  # This is where a user would be asked in-line
             return BadRequest("No permission given")
 
@@ -651,6 +653,10 @@ class UmaAS(object):
 
         self.permit.set_permit(user, requestor, rsid, scopes)
 
+    def read_permission(self, user, requestor, name):
+        obj = self.resource_set.find(name=name)
+        rsid = self.map_id_rsid[obj["_id"]]
+        return self.permit.get_permit(user, requestor, rsid)
 
 # ----------------------------------------------------------------------------
 
@@ -726,8 +732,8 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
                                                         body, owner, client_id,
                                                         if_match, **kwargs)
 
-    def dynamic_client_endpoint(self, request="", **kwargs):
-        return self.registration_endpoint(request, **kwargs)
+    def dynamic_client_endpoint(self, request="", environ=None, **kwargs):
+        return self.registration_endpoint(request, environ, **kwargs)
 
     def permission_registration_endpoint(self, request="", authn="", **kwargs):
         try:
@@ -738,14 +744,19 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
         return self.permission_registration_endpoint_(request, owner,
                                                       client_id, **kwargs)
 
-    def authorization_data_request_endpoint(self, request="", authn="", **kwargs):
+    def authorization_data_request_endpoint(self, request="", authn="",
+                                            **kwargs):
         try:
             owner, client_id = client_authentication(self.sdb, authn)
         except AuthnFailed:
             return Unauthorized()
 
-        return self.authorization_data_request_endpoint_(request, owner, client_id,
-                                                    **kwargs)
+        return self.authorization_data_request_endpoint_(request, owner,
+                                                         client_id,
+                                                         **kwargs)
+
+    def uma_providerinfo_endpoint(self, handle="", **kwargs):
+        return self.providerinfo_endpoint_(handle, **kwargs)
 
 
 class OIDCUmaAS(OIDCProvider, UmaAS):
@@ -779,7 +790,6 @@ class OIDCUmaAS(OIDCProvider, UmaAS):
     #        self.cookie_func = authn_broker[0].create_cookie
     #    else:
     #        self.cookie_func = None
-
 
     def user_from_bearer_token(self, authn=""):
         if not authn:
@@ -842,8 +852,8 @@ class OIDCUmaAS(OIDCProvider, UmaAS):
                                                         owner, client_id,
                                                         if_match, **kwargs)
 
-    def dynamic_client_endpoint(self, request="", **kwargs):
-        return self.registration_endpoint(request, **kwargs)
+    def dynamic_client_endpoint(self, request="", environ=None, **kwargs):
+        return self.registration_endpoint(request, environ, **kwargs)
 
     def permission_registration_endpoint(self, request="", authn="", **kwargs):
         try:

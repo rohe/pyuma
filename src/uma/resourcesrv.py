@@ -1,12 +1,13 @@
 import logging
 import traceback
 from urllib import urlencode
-from oic.oauth2 import rndstr, AuthorizationRequest
+from oic.oauth2 import rndstr, AuthorizationRequest, PBase
 from oic.oauth2 import JSON_ENCODED
 from oic.oauth2.provider import Endpoint
 import sys
 from oic.utils import http_util
 from oic.utils.http_util import Response
+from oic.utils.webfinger import WebFinger
 from uma.client import Client
 from uma.message import IntrospectionRequest
 from uma.message import IntrospectionResponse
@@ -153,6 +154,11 @@ class ResourceServerBase(object):
         self.permreg.set(owner, "client_key", client_key)
 
     def dataset_access(self, owner, environ, resource):
+        """
+        :param owner:
+        :param environ:
+        :param resource:
+        """
         # It there a RPT
         rpt = self._get_bearer_token(environ)
         if not rpt:  # No RPT
@@ -170,7 +176,7 @@ class ResourceServerBase(object):
             # verify the RPT
             resp = self.do_introspection(owner, rpt, resource)
 
-            if not resp["active"]:
+            if not resp["valid"]:
                 return ErrorResponse(as_uri=_as,
                                      error="Unauthorized",
                                      host_id="rs.example.com").to_json()
@@ -180,7 +186,7 @@ class ResourceServerBase(object):
                 try:
                     assert resp["permissions"]
                 except (AssertionError, KeyError):
-                    fpath = self.dataset.filename(resource)
+                    fpath = self.dataset.resource_name(resource)
                     rsid = self.path2rsid[fpath]
 
                     # try:
@@ -212,10 +218,11 @@ class ResourceServerBase(object):
         """
 
         resp = self.dataset_access(owner, environ, request)
-        if isinstance(resp, ErrorResponse):
+        if "error" in resp:
             return resp
 
-        res = self.dataset(owner, resp["permissions"])
+        # Might be list of permissions
+        res = self.dataset.do(owner, environ, permissions=resp)
         return ResourceResponse(resource=res).to_json()
 
     def rs_request_info(self, owner, msgtype, method=DEFAULT_METHOD,
@@ -309,6 +316,28 @@ class ResourceServerBase(object):
         csi["_rev"] = response["_rev"]
         csi["rsid"] = rsid
         self.permreg.add_resource_set_description(owner, csi)
+        return rsid
+
+    def register_complex_resource_set_description(self, owner,
+                                                  resource_set_desc, path):
+        try:
+            subsets = resource_set_desc["subsets"]
+        except KeyError:
+            subsets = []
+
+        subset_id = []
+        for sub in subsets:
+            rsid = self.register_complex_resource_set_description(owner, sub,
+                                                                  path)
+            subset_id.append(rsid)
+
+        if subset_id:
+            resource_set_desc["subsets"] = subset_id
+
+        rsid = self.register_resource_set_description(owner,
+                                                      resource_set_desc.to_json,
+                                                      path)
+        return rsid
 
     # def update_resource_set_description(self, owner, rsid, **kwargs):
     #     """
@@ -397,7 +426,7 @@ class ResourceServer1C(ResourceServerBase, Client):
         ir = IntrospectionRequest(token=rpt)
 
         if path:
-            fpath = self.dataset.filename(path)
+            fpath = self.dataset.resource_name(path)
             ir["resource_id"] = self.path2rsid[fpath]
 
         request_args = {"access_token": pat}
@@ -517,7 +546,7 @@ class ResourceServer1C(ResourceServerBase, Client):
         return self.request_and_return(url, StatusResponse, "GET",
                                        http_args=ht_args)
 
-    def begin(self, environ, start_response, session, acr_value=""):
+    def begin(self, environ, start_response, session, opkey="", acr_value=""):
         """Step 1: Get a access grant.
 
         :param environ:
@@ -588,3 +617,18 @@ class ResourceServer1C(ResourceServerBase, Client):
             "result": result
         }
         return resp(environ, start_response, **argv)
+
+    def find_srv_discovery_url(self, resource):
+        """
+        Use Webfinger to find the OP, The input is a unique identifier
+        of the user. Allowed forms are the acct, mail, http and https
+        urls. If no protocol specification is given like if only an
+        email like identifier is given. It will be translated if possible to
+        one of the allowed formats.
+
+        :param resource: unique identifier of the user.
+        :return:
+        """
+
+        wf = WebFinger(httpd=PBase(ca_certs=self.ca_certs))
+        return wf.discovery_query(resource)

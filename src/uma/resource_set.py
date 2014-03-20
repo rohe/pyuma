@@ -92,3 +92,8 @@ class ResourceSetDB(object):
             _ids.append(str(item["_id"]))
 
         return _ids
+
+    def clean(self):
+        _ids = self.list()
+        for _id in _ids:
+            self.delete(_id)

@@ -6,6 +6,7 @@ from oic.utils.http_util import NoContent
 from oic.utils.http_util import get_post
 from oic.utils.time_util import utc_time_sans_frac
 from uma.message import ResourceSetDescription
+from uma.uma_info_provider import UMAInformationProvider
 
 __author__ = 'roland'
 import os
@@ -29,8 +30,9 @@ OPER2SCOPE = {
 }
 
 
-class JsonResourceServer():
+class JsonResourceServer(UMAInformationProvider):
     def __init__(self, root, base, baseurl, owners=None):
+        UMAInformationProvider.__init__(self)
         if not os.path.isdir(root):
             os.mkdir(root)
         self.root = root
@@ -56,7 +58,7 @@ class JsonResourceServer():
             os.mkdir(_path)
         return i
 
-    def filename(self, path):
+    def resource_name(self, path):
         """
         Convert path to file name
         urlpath = <base>/dir1/dir2/file
@@ -100,25 +102,12 @@ class JsonResourceServer():
 
         return False
 
-    # def check_permission(self, permission, oper):
-    #     """
-    #     :param permission: One or a list of AuthzDescription instances
-    #     :param oper: The operation (HTTP method)
-    #     """
-    #     if isinstance(permission, list):
-    #         for perm in permission:
-    #             if self._check_permission(perm, oper):
-    #                 return True
-    #         return False
-    #     else:
-    #         return self._check_permission(permission, oper)
-
     def do_get(self, path):
         """
         GET /{collection}/{id}
         """
 
-        _name = self.filename(path)
+        _name = self.resource_name(path)
         if os.path.isfile(_name):
             try:
                 data = open(_name, "r").read()
@@ -133,7 +122,7 @@ class JsonResourceServer():
         """
 
         """
-        _name = self.filename(path)
+        _name = self.resource_name(path)
         try:
             assert os.path.exists(_name)
             assert os.path.isdir(_name)
@@ -171,8 +160,8 @@ class JsonResourceServer():
         DELETE /{collection}/{id}
         """
 
-        if os.path.exists(self.filename(path)):
-            os.remove(self.filename(path))
+        if os.path.exists(self.resource_name(path)):
+            os.remove(self.resource_name(path))
             return NoContent("")
         else:
             return ErrorResponse(error="not_available")
@@ -183,7 +172,7 @@ class JsonResourceServer():
 
         """
 
-        _name = self.filename(path)
+        _name = self.resource_name(path)
         try:
             f = open(_name, "w")
         except IOError:
@@ -215,7 +204,7 @@ class JsonResourceServer():
 
         """
 
-        _name = self.filename(path)
+        _name = self.resource_name(path)
         try:
             f = open(_name, "r")
         except IOError:
@@ -253,7 +242,7 @@ class JsonResourceServer():
         POST /{collection}
         """
 
-        _name = self.filename(path)
+        _name = self.resource_name(path)
         try:
             index = self.index[user]
         except KeyError:
@@ -366,7 +355,7 @@ class JsonResourceServer():
 
         return rsd
 
-    def update_resource_set_descriptions(self, user):
+    def update_resource_set_description(self, user):
         """
         :param user: The owner of the resource sets
         :return: A list of 2-tuples (changetype, change)
