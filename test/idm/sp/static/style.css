@@ -1,0 +1,242 @@
+#background
+{
+    display: none;
+    position: fixed;
+    left: 0px;
+    top:  0px;
+    height:100%;
+    width: 100%;
+    border-style: solid;
+    border-width: 0px;
+    margin: 0px;
+    background-color:lightgray;
+    filter:alpha(opacity=50);
+    opacity:0.5;
+    z-index:9
+}
+
+div {
+    font: Verdana;
+    font-size: 18px;
+    color: #222222;
+}
+
+span {
+    font: Verdana;
+    font-size: 18px;
+    color: #222222;
+}
+
+span.h1 {
+    font: Verdana;
+    font-size: 28px;
+    color: #222222;
+}
+
+span.h2 {
+    font: Verdana;
+    font-size: 22px;
+    color: #222222;
+}
+
+span.h3 {
+    font: Verdana;
+    font-size: 18px;
+    color: #222222;
+    font-weight: bold;
+}
+
+#iframe {
+    margin:20px;
+    position: absolute;
+    left: 0px;
+    top:  0px;
+    border-style: solid;
+    border-width: 1px;
+    display:none;
+    background-color:white;
+    z-index:99;
+}
+
+#iframeDescription {
+    margin-left:20px;
+    position: absolute;
+    left: 0px;
+    top:  0px;
+    border-style: solid;
+    border-width: 1px;
+    display:none;
+    background-color:white;
+    z-index:99;
+    text-align: center;
+}
+
+body, html { /* set size of body to full page and remove margins */
+    width: 100%;
+    height: 100%;
+}
+
+td
+{
+    vertical-align:middle;
+}
+
+table {
+	border-collapse: collapse;
+	border-spacing: 0;
+}
+
+iframe
+{
+    display: none;
+    width: 100%;
+    height: 100%;
+    display:none;
+    border-style: none;
+    border-width: 0px;
+}
+
+div#help_instructions {
+    overflow:hidden; /*+*/
+    background-color: white;
+}
+
+
+div.framed {
+    border-width: 1px;
+    border-color: lightgray;
+    border-style: solid;
+}
+
+span.link {
+    color: #0088cc;
+    cursor:pointer;
+}
+
+div#running_test {
+    float:right;
+    vertical-align: middle;
+    display: none;
+}
+
+div#help_instructions{
+    display:none;
+}
+
+div#left_help {
+    background-color: transparent;
+    height:100%;
+}
+
+div#bottom_help {
+    float: right;
+}
+
+div#notrun {
+    background-color: white;
+}
+
+div#ok {
+    background-color: #b0e399;
+}
+
+div#toofew {
+    background-color: #fdff7f;
+}
+
+div#toomany {
+    background-color: #ff9900;
+}
+
+div#toomanyfew {
+    background-color: #ff7f7f;
+}
+
+div.status_help {
+    border-width: 1px;
+    border-color: lightgray;
+    border-style: solid;
+    width:159px;
+}
+
+div#formContainer {
+    width:100%;
+    margin:auto;
+    margin-top:20px;
+    border:2px solid lightgray;
+    #border-radius: 20px;
+    padding: 10px;
+    overflow:hidden; /*+*/
+}
+
+div.extra {
+    overflow:hidden; /*+*/
+    background-color: transparent;
+    float: left;
+    width:100%;
+    height:100%;
+    border-top-width: 1px;
+    border-top-color: lightgray;
+    border-top-style: solid;
+    display: none;
+}
+
+div.inner_extra {
+    overflow:hidden; /*+*/
+    background-color: white;
+    margin: 3px;
+}
+
+div.extrarow {
+    overflow:hidden; /*+*/
+    background-color: white;
+    border-width: 1px;
+    border-bottom-width: 0px;
+    border-color: lightgray;
+    border-style: solid;
+}
+
+img.sort {
+    cursor:pointer;
+}
+
+div.extrarow:hover {
+    #background-color: #cdebf2;
+}
+
+div.result {
+    float: left;
+    width:50%;
+    height:100%;
+}
+
+div.information {
+    float: left;
+    width:50%;
+    height:100%;
+}
+
+div.textleft {
+    background-color: white;
+    margin-top: 3px;
+    margin-bottom: 3px;
+    margin-left: 3px;
+    padding: 2px;
+    height:100%;
+}
+
+div.textright {
+    background-color: white;
+    margin-top: 3px;
+    margin-bottom: 3px;
+    margin-right: 3px;
+    border-left-width: 2px;
+    border-left-style: solid;
+    border-left-color: lightgray;
+    padding: 2px;
+    height:100%;
+}
+
+.mainbtn {
+    float: right;
+}
