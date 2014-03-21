@@ -7,6 +7,8 @@ from oic.oauth2 import SINGLE_REQUIRED_STRING
 from oic.oauth2 import SINGLE_OPTIONAL_STRING
 from oic.oauth2 import dynreg
 from oic.oic.message import msg_ser
+from oic.oic.message import json_ser
+from oic.oic.message import json_deser
 from oic.oic.message import SINGLE_REQUIRED_INT
 from oic.oic.message import SINGLE_OPTIONAL_BOOLEAN
 from oic.oic.message import ProviderConfigurationResponse

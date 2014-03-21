@@ -123,6 +123,7 @@ class ResourceServerBase(object):
         # The relationship between a URL path and which resource id the
         # resource is stored under
         self.path2rsid = {}
+        self.name2rsid = {}
 
         # A hash per resource (=user info) to allow simple check if
         # something has changed.
@@ -189,13 +190,6 @@ class ResourceServerBase(object):
                     fpath = self.dataset.resource_name(resource)
                     rsid = self.path2rsid[fpath]
 
-                    # try:
-                    #     query = parse_qs(environ["QUERY_STRING"])
-                    #     _perms = ["%s/%s" % (DESC_BASE, v) for v in
-                    #               query["attr"]]
-                    # except KeyError:
-                    #     _perms = [DESC_BASE]
-
                     _perms = [self.dataset.get_necessary_scope(environ)]
 
                     resp = self.register_permission(owner, rsid,
@@ -222,7 +216,8 @@ class ResourceServerBase(object):
             return resp
 
         # Might be list of permissions
-        res = self.dataset.do(owner, environ, permissions=resp)
+        res = self.dataset.do(owner, environ, response=resp,
+                              name2rsid=self.name2rsid)
         return ResourceResponse(resource=res).to_json()
 
     def rs_request_info(self, owner, msgtype, method=DEFAULT_METHOD,
@@ -321,7 +316,8 @@ class ResourceServerBase(object):
     def register_complex_resource_set_description(self, owner,
                                                   resource_set_desc, path):
         try:
-            subsets = resource_set_desc["subsets"]
+            subsets = [ResourceSetDescription().from_json(v) for v in
+                       resource_set_desc["subsets"]]
         except KeyError:
             subsets = []
 
@@ -329,14 +325,15 @@ class ResourceServerBase(object):
         for sub in subsets:
             rsid = self.register_complex_resource_set_description(owner, sub,
                                                                   path)
+            self.path2rsid[path] = rsid
             subset_id.append(rsid)
 
         if subset_id:
             resource_set_desc["subsets"] = subset_id
 
-        rsid = self.register_resource_set_description(owner,
-                                                      resource_set_desc.to_json,
-                                                      path)
+        rsid = self.register_resource_set_description(
+            owner, resource_set_desc.to_json(), path)
+        self.name2rsid[resource_set_desc["name"]] = rsid
         return rsid
 
     # def update_resource_set_description(self, owner, rsid, **kwargs):

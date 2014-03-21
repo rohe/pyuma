@@ -324,7 +324,7 @@ def application(environ, start_response):
         for rset in desc:
             if COMPLEX:
                     RES_SRV.register_complex_resource_set_description(
-                        uid, rset.to_json(), "info/%s" % uid)
+                        uid, rset, "info/%s" % uid)
             else:
                 try:
                     RES_SRV.register_resource_set_description(uid,

@@ -84,11 +84,11 @@ def static(environ, session, path):
 # ........................................................................
 
 
-def edit_permission_form(uid, resource_name, scopes, entity_id, checked=None):
+def edit_permission_form(uid, rst, entity_id, resource_name, checked=None):
     cval = {"user": uid, "authn": PASSWORD}
     headers = [CookieHandler.create_cookie("%s" % (cval,), "sso", COOKIE_NAME)]
 
-    resp = Response(mako_template="permissions.mako",
+    resp = Response(mako_template="mult_perm.mako",
                     template_lookup=azs.LOOKUP,
                     headers=headers)
     if checked is None:
@@ -98,7 +98,7 @@ def edit_permission_form(uid, resource_name, scopes, entity_id, checked=None):
     #     rsname)
     argv = {
         "rsname": resource_name,
-        "scopes": scopes,
+        "scopes": rst,
         "checked": checked,
         "action": "permreg",
         "entity_id": entity_id,
@@ -140,8 +140,8 @@ def set_permission(environ, session):
             except KeyError:
                 return authenticate(environ, session, "set_permission")
 
-    AUTHZSRV.store_permission(_user, query["sp_entity_id"][0],
-                              query["rsname"][0], query["perm"])
+    perm = dict([(v, None) for v in query["perm"]])
+    AUTHZSRV.store_permission(_user, query["sp_entity_id"][0], perm)
     return Response("Permission stored"), {}
 
 
@@ -159,10 +159,18 @@ def get_permissions(environ, session):
                     authorization=authn_info)
                 _user = ident["uid"]
             except KeyError:
-                return authenticate(environ, session, "set_permission")
+                return authenticate(environ, session, "get_permission")
 
     res = AUTHZSRV.read_permissions(_user, query["sp_entity_id"][0],
                                     query["rsname"][0])
+    return Response()
+
+
+def modify_permission(environ, session):
+    return Response()
+
+
+def delete_permissions(environ, session):
     return Response()
 
 
@@ -427,7 +435,7 @@ def manage(uid, headers=None):
     resp = Response(mako_template="manage.mako", template_lookup=azs.LOOKUP,
                     headers=headers)
 
-    res_set = AUTHZSRV.resource_sets_by_user(uid)
+    res_set = AUTHZSRV.resource_sets_by_user(uid, collapse=True)
     # returns list of ResourceSetDescription instances
     rs_list = [(r["name"], AUTHZSRV.map_id_rsid[r["_id"]]) for r in res_set]
 
@@ -507,18 +515,17 @@ def application(environ, start_response):
         query = parse_qs(get_body(environ))
         logger.debug("%s: %s" % (path, query))
         if query["commit"] == ["add"]:
+            _rsid = query["resource"][0]
             try:
-                rsd = AUTHZSRV.resource_set.read(
-                    AUTHZSRV.map_rsid_id[query["resource"][0]])
+                rst = AUTHZSRV.resource_set_tree_by_rsid(_rsid)
             except UnknownObject:
                 resp = BadRequest("Unknown object")
             except Exception, err:
                 raise
             else:
-                resp, argv = edit_permission_form(query["user"][0],
-                                                  rsd["name"],
-                                                  rsd["scopes"],
-                                                  query["requestor"][0])
+                resp, argv = edit_permission_form(
+                    query["user"][0], rst, query["requestor"][0],
+                    AUTHZSRV.resource_set_name(_rsid))
         elif query["commit"] == ["display"]:
             resp, argv = get_permissions(environ, session)
         elif query["commit"] == ["modify"]:

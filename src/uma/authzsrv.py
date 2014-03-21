@@ -212,7 +212,7 @@ class Permission(object):
         """
         del self.db[owner]["request"][ticket]
 
-    def set_permit(self, owner, requestor, resource_id, scopes):
+    def set_permit(self, owner, requestor, resource_id, scopes=None):
         if owner not in self.db:
             self.init_owner(owner)
 
@@ -228,6 +228,9 @@ class Permission(object):
 
     def get_permit(self, owner, requestor, resource_id):
         return self.db[owner]["permit"][requestor][resource_id]
+
+    def get_permit_by_requestor(self, owner, requestor):
+        return self.db[owner]["permit"][requestor]
 
     def delete_permit(self, owner, requestor, resource_id):
         del self.db[owner]["permit"][requestor][resource_id]
@@ -252,11 +255,10 @@ class Permission(object):
         if owner not in self.db:
             self.init_owner(owner)
 
-        _acc = self.db[owner]["accepted"]
         try:
-            _acc[rpt] = authz_desc
+            self.db[owner]["accepted"][rpt].append(authz_desc)
         except KeyError:
-            self.db[owner]["accepted"] = {rpt: authz_desc}
+            self.db[owner]["accepted"] = {rpt: [authz_desc]}
 
     def get_accepted(self, owner, rpt):
         return self.db[owner]["accepted"][rpt]
@@ -407,7 +409,32 @@ class UmaAS(object):
 
         return response
 
-    def resource_sets_by_user(self, user):
+    def _collapse(self, items):
+        referenced = {}
+        ibrsid = {}
+        for item in items:
+            try:
+                for rsid in item["subsets"]:
+                    if not rsid in referenced:
+                        referenced[rsid] = 1
+                    else:
+                        referenced[rsid] += 1
+            except KeyError:
+                pass
+
+            _rsid = self.map_id_rsid[item["_id"]]
+            if not _rsid in referenced:
+                referenced[_rsid] = 0
+            ibrsid[_rsid] = item
+
+        res = []
+        for key, val in referenced.items():
+            if val == 0:
+                res.append(ibrsid[key])
+
+        return res
+
+    def resource_sets_by_user(self, user, collapse=False):
         """
         :param user: The user for which resource set descriptions has been
             registered.
@@ -420,7 +447,35 @@ class UmaAS(object):
             except Exception:
                 raise
 
+        if collapse:
+            res = self._collapse(res)
+
         return res
+
+    def resource_set_tree_by_rsid(self, rsid):
+        rs = self.resource_set.read(self.map_rsid_id[rsid])
+        _name = rs["name"].split("/")[-1]
+        try:
+            _rsids = rs["subsets"]
+        except KeyError:
+            return rsid, _name
+        else:
+            res = {}
+            for _rsid in _rsids:
+                _rs = self.resource_set_tree_by_rsid(_rsid)
+                try:
+                    res.update(_rs)
+                except ValueError:
+                    try:
+                        res.append(_rs)
+                    except AttributeError:
+                        res = [_rs]
+
+            return {(rsid, _name): res}
+
+    def resource_set_name(self, rsid):
+        rs = self.resource_set.read(self.map_rsid_id[rsid])
+        return rs["name"]
 
     def permits_by_user(self, owner):
         """
@@ -554,6 +609,30 @@ class UmaAS(object):
 
         return resp
 
+    def get_subsets(self, owner, requestor, scopes):
+        permits = self.permit.get_permit_by_requestor(owner, requestor)
+        res = {}
+
+        for permit, _scopes in permits.items():
+            _scs = []
+            for scope in scopes:
+                try:
+                    assert scope in _scopes
+                except AssertionError:
+                    pass
+                else:
+                    _scs.append(scope)
+            if _scs:
+                res[permit] = _scs
+        return res
+
+    def register_permission(self, owner, rpt, rsid, scopes):
+        now = time.time()
+        perm = AuthzDescription(resource_set_id=rsid, scopes=scopes,
+            expires_at=now + self.session.lifetime, issued_at=now)
+
+        self.permit.set_accepted(owner, rpt, perm)
+
     def authorization_data_request_endpoint_(self, request="", requestor="",
                                              client_id="", **kwargs):
         """
@@ -588,26 +667,31 @@ class UmaAS(object):
 
         # Is there any permissions registered by the owner, if so verify
         # that it allows what is requested. Return what is allowed !
+        sp_entity_id = requestor.split("@")[1]
+
         try:
-            sp_entity_id = requestor.split("@")[1]
             allow_scopes = self.permit.get_permit(
                 owner, sp_entity_id, permission["resource_set_id"])
-        except KeyError:  # This is where a user would be asked in-line
-            return BadRequest("No permission given")
+        except KeyError:  #
+            if "subsets" in rsd:  # complex resource set
+                permissions = self.get_subsets(owner, sp_entity_id,
+                                               permission["scopes"])
+                for rsid, scopes in permissions.items():
+                    self.register_permission(owner, adr["rpt"], rsid, scopes)
+            else:
+                return BadRequest("No permission given")
+        else:
+            _scopes = []
+            for scope in permission["scopes"]:
+                try:
+                    assert scope in allow_scopes
+                except AssertionError:
+                    pass
+                else:
+                    _scopes.append(scope)
 
-        _scopes = eval_scopes(permission, allow_scopes)
-
-        if not _scopes:
-            return BadRequest("No requested scopes allowed")
-
-        now = time.time()
-        # resource_set_id should be gotten from the RPT
-        perm = AuthzDescription(resource_set_id=permission["resource_set_id"],
-                                scopes=_scopes,
-                                expires_at=now + self.session.lifetime,
-                                issued_at=now)
-
-        self.permit.set_accepted(owner, adr["rpt"], perm)
+            self.register_permission(owner, adr["rpt"],
+                                     permission["resource_set_id"], _scopes)
         return Created("")
 
     def remove_permission(self, owner, requestor, resource_name):
@@ -634,24 +718,19 @@ class UmaAS(object):
                 # immediate expiration
                 self.session.update(_rpt, expires_at=0)
 
-    def store_permission(self, user, requestor, name, scopes):
+    def store_permission(self, user, requestor, rsids):
         """
-        :param user:
-        :param requestor:
-        :param name:
-        :param scopes:
+        :param user: The resource owner
+        :param requestor: The requestor ID
+        :param rsids: dictionary with Resource set IDs as keys and scopes
+            as values
         """
-        obj = self.resource_set.find(name=name)
-        rsid = self.map_id_rsid[obj["_id"]]
 
-        for scope in scopes:
-            assert scope in obj["scopes"]
-
-        # If there is some old specification for this combination
-        # replace it with this new one.
-        self.remove_permission(user, requestor, name)
-
-        self.permit.set_permit(user, requestor, rsid, scopes)
+        for rsid, scopes in rsids.items():
+            if scopes is None:
+                rs = self.resource_set.read(self.map_rsid_id[rsid])
+                scopes = rs["scopes"]
+            self.permit.set_permit(user, requestor, rsid, scopes)
 
     def read_permission(self, user, requestor, name):
         obj = self.resource_set.find(name=name)

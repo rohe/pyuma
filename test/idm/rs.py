@@ -175,7 +175,7 @@ class UserInfo(UMAInformationProvider):
         except KeyError:
             return ErrorResponse(error="not_available")
 
-    def do(self, path, environ, permissions=None, requestor=""):
+    def do(self, path, environ, permissions=None, requestor="", **kwargs):
         """
         :param path:
         :param environ: WSGI Environment
@@ -212,10 +212,14 @@ class UserInfo(UMAInformationProvider):
 
     @staticmethod
     def get_necessary_scope(environ):
-        return DESC_BASE
+        return READ
 
 
 class UserInfoMulti(UserInfo):
+    def __init__(self, db, base):
+        UserInfo.__init__(self, db, base)
+        self.map_path2rsid = {}
+
     def build_resource_set_description(self, user):
         """
         Will return a list of ResourceSetDescriptions covering all
@@ -232,19 +236,77 @@ class UserInfoMulti(UserInfo):
             _sub = []
             if isinstance(vals, basestring):
                 _name = "%s/%s/%s" % (base_url, att, urllib.quote(vals))
-                _sub.append(ResourceSetDescription(name=_name, scopes=[READ]))
+                _sub.append(
+                    ResourceSetDescription(name=_name, scopes=[READ]).to_json())
             else:
                 for val in vals:
                     _name = "%s/%s/%s" % (base_url, att, urllib.quote(val))
                     _sub.append(ResourceSetDescription(name=_name,
-                                                       scopes=[READ]))
+                                                       scopes=[READ]).to_json())
 
             _name = "%s/%s" % (base_url, att)
             rsd.append(ResourceSetDescription(name=_name, scopes=[READ],
-                                              subsets=_sub))
+                                              subsets=_sub).to_json())
 
-        return ResourceSetDescription(name=base_url, scopes=[READ],
-                                      subsets=rsd)
+        return [ResourceSetDescription(name=base_url, scopes=[READ],
+                                       subsets=rsd)]
+
+    @staticmethod
+    def _filter_by_permission(base, ava, response, name2rsid):
+        """
+        :param ava: attribute value dictionary
+        :param response: A IntrospectionResponse containing permissions
+        :param path2rsid: A map from paths to RSIDs
+        """
+        base_url = IDM + base
+
+        # a bit simplistic since neither expired_at or scopes are checked
+        allowed = [a["resource_set_id"] for a in response["permissions"]]
+
+        res = {}
+        for att, vals in ava.items():
+            _path = "%s/%s" % (base_url, att)
+            if name2rsid[_path] in allowed:
+                res[att] = vals
+                continue
+
+            if isinstance(vals, basestring):
+                _path = "%s/%s/%s" % (base_url, att, urllib.quote(vals))
+                if name2rsid[_path] in allowed:
+                    res[att] = vals
+            else:
+                for val in vals:
+                    _path = "%s/%s/%s" % (base_url, att, urllib.quote(val))
+                    if name2rsid[_path] in allowed:
+                        try:
+                            res[att].append(val)
+                        except KeyError:
+                            res[att] = [val]
+
+            _name = "%s/%s" % (base_url, att)
+        return res
+
+    def do(self, path, environ, response=None, requestor="", **kwargs):
+        """
+        :param path:
+        :param environ: WSGI Environment
+        :param response: A IntrospectionResponse containing permissions
+        :param requestor: Who wants this.
+        :return: Information
+        """
+        method = environ["REQUEST_METHOD"]
+        try:
+            query = environ["QUERY_STRING"]
+        except KeyError:
+            query = None
+
+        if method == "GET":
+            ava = self.do_get(path, query)
+            # pick out whatever is allowed to return
+            return self._filter_by_permission(path, ava, response,
+                                              kwargs["name2rsid"])
+        else:
+            return ErrorResponse(error="unsupported_method")
 
 
 def main(baseurl, cookie_handler):
@@ -268,7 +330,7 @@ def main(baseurl, cookie_handler):
         "scope": PAT
     }
 
-    dataset = UserInfo(USERDB, "")
+    dataset = UserInfoMulti(USERDB, "")
     res_srv = ResourceServer1C(dataset, **config)
 
     init_keyjar(res_srv, KEYS, "static/jwk_rs.json")
