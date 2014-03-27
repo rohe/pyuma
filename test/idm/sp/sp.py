@@ -722,7 +722,7 @@ def application(environ, start_response):
         resp = BadRequest("%s" % err)
         return resp(environ, start_response)
     except Exception, err:
-        logging.exception("RUN", err)
+        logging.exception("RUN", "%s" % err)
         return [err]
 
 # ----------------------------------------------------------------------------

@@ -185,7 +185,8 @@ class Permission(object):
         self.db[owner] = {
             "request": {},
             "permit": {},
-            "accepted": {}
+            "accepted": {},
+            "permitted_at": {}
         }
 
     def add_request(self, owner, ticket, req):
@@ -225,6 +226,7 @@ class Permission(object):
                 _perm[requestor] = {resource_id: scopes}
             except KeyError:
                 self.db[owner]["permit"] = {requestor: {resource_id: scopes}}
+        self.db[owner]["permitted_at"] = time.time()
 
     def get_permit(self, owner, requestor, resource_id):
         return self.db[owner]["permit"][requestor][resource_id]
@@ -234,6 +236,7 @@ class Permission(object):
 
     def delete_permit(self, owner, requestor, resource_id):
         del self.db[owner]["permit"][requestor][resource_id]
+        self.db[owner]["permitted_at"] = time.time()
 
     def delete_permit_by_resource_id(self, owner, resource_id):
         for req, spec in self.db[owner]["permit"].items():
@@ -280,6 +283,12 @@ class Permission(object):
                 if key == requestid:
                     return owner
 
+    def get_rsid_permits(self, owner, requestor):
+        try:
+            return self.db[owner]["permit"][requestor].keys()
+        except KeyError:
+            return []
+
 
 class UmaAS(object):
     endp = [ResourceSetRegistrationEndpoint, IntrospectionEndpoint,
@@ -300,6 +309,7 @@ class UmaAS(object):
         self.map_rsid_id = {}
         self.map_id_rsid = {}
         self.map_user_id = {}
+        self.eid2rpt = {}
 
     def endpoints(self):
         for endp in self.endp:
@@ -610,8 +620,11 @@ class UmaAS(object):
         return resp
 
     def get_subsets(self, owner, requestor, scopes):
-        permits = self.permit.get_permit_by_requestor(owner, requestor)
         res = {}
+        try:
+            permits = self.permit.get_permit_by_requestor(owner, requestor)
+        except KeyError:
+            return res
 
         for permit, _scopes in permits.items():
             _scs = []
@@ -629,7 +642,8 @@ class UmaAS(object):
     def register_permission(self, owner, rpt, rsid, scopes):
         now = time.time()
         perm = AuthzDescription(resource_set_id=rsid, scopes=scopes,
-            expires_at=now + self.session.lifetime, issued_at=now)
+                                expires_at=now + self.session.lifetime,
+                                issued_at=now)
 
         self.permit.set_accepted(owner, rpt, perm)
 
@@ -690,6 +704,12 @@ class UmaAS(object):
                 else:
                     _scopes.append(scope)
 
+            # bind sp_entity_id to specific RPT for this user
+            try:
+                self.eid2rpt[owner][sp_entity_id] = adr["rpt"]
+            except KeyError:
+                self.eid2rpt[owner] = {sp_entity_id: adr["rpt"]}
+
             self.register_permission(owner, adr["rpt"],
                                      permission["resource_set_id"], _scopes)
         return Created("")
@@ -726,16 +746,57 @@ class UmaAS(object):
             as values
         """
 
-        for rsid, scopes in rsids.items():
+        logger.info("store: (%s, %s, %s)" % (user, requestor, rsids))
+
+        present = self.permit.get_rsid_permits(user, requestor)
+        _new = [k for k in rsids.keys() if k not in present]
+
+        for rsid in _new:
+            scopes = rsids[rsid]
             if scopes is None:
                 rs = self.resource_set.read(self.map_rsid_id[rsid])
                 scopes = rs["scopes"]
             self.permit.set_permit(user, requestor, rsid, scopes)
 
+        _rem = [k for k in present if k not in rsids]
+        for rsid in _rem:
+            self.permit.delete_permit(user, requestor, rsid)
+
     def read_permission(self, user, requestor, name):
         obj = self.resource_set.find(name=name)
         rsid = self.map_id_rsid[obj["_id"]]
         return self.permit.get_permit(user, requestor, rsid)
+
+    def rec_rm_permission(self, user, requestor, rsid):
+        """
+        If the resource set is a complex set, remove all subset permissions
+        :param user: The owner of the resource
+        :param requestor: Who the permission is applying to
+        :param rsid: The resource set name
+        """
+        rs = self.resource_set.read(self.map_rsid_id[rsid])
+        if "subsets" in rs:
+            for ss in rs["subsets"]:
+                self.rec_rm_permission(user, requestor, ss)
+        try:
+            self.permit.delete_permit(user, requestor, rsid)
+        except KeyError:
+            pass
+
+    def rm_permission(self, user, requestor, rsid):
+        """
+        If the resource set is a complex set, remove all subset permissions
+        :param user: The owner of the resource
+        :param requestor: Who the permission is applying to
+        :param rsid: The resource set name
+        """
+        logger.info("remove: (%s, %s, %s)" % (user, requestor, rsid))
+        self.rec_rm_permission(user, requestor, rsid)
+        return True
+
+    def rsid_permits(self, user, requestor):
+        return self.permit.get_rsid_permits(user, requestor)
+
 
 # ----------------------------------------------------------------------------
 

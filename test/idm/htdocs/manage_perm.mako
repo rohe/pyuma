@@ -12,15 +12,13 @@ def resource_set_choice(rs_list):
 %>
 
 <%!
-def requestor_choice(rs_list):
+def trusted_services(perm_list):
     """
-    Creates a dropdown list of requestors
-    Each item in the list is a tuple of (name, entity_id)
+    Creates a table of service, approval date, permissions
+    Each item in perm_list is a dictionary of (name, perm_dict)
     """
     element = "<select name=\"requestor\">"
     for name, entity_id in rs_list:
-        if len(name) > 120:
-            name = name[:120]
         element += "<option value=\"%s\">%s</option>" % (entity_id, name)
     element += "</select>"
     return element
@@ -40,8 +38,6 @@ def requestor_choice(rs_list):
     <script src="../../assets/js/respond.min.js"></script>
     <style type="text/css">
       tbody tr:nth-child(odd){ background-color:#ccc; }
-      select { width:100px; overflow:hidden; white-space:pre;
-          text-overflow:ellipsis; -webkit-appearance: none; }
     </style>
     <![endif]-->
   </head>
@@ -52,12 +48,11 @@ def requestor_choice(rs_list):
       <div class="jumbotron">
         <form action="${action}" method="${method}">
             <input type="hidden" name="user" value="${user}">
-            <h3>Chose the resource set: </h3>
-            ${resource_set_choice(rs_list)}
-            <h3>Chose requestor</h3>
-            <div id="something" style="width:500px">
-            ${requestor_choice(req_list)}
-            </div><hr>
+            <h3>Manage Permissions</h3>
+            <h4>Trusted services</h4>
+            You can manage permission to your identity by services.
+            <hr>
+
             <br>
             <input type="submit" name="commit" value="display"/>
             <input type="submit" name="commit" value="modify"/>

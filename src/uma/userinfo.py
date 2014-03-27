@@ -103,11 +103,13 @@ class UMAUserInfo(SAMLUserInfo):
                 return R2C[resp.status_code](resp.text)
 
         if resp.status_code == 403:  # Permission registered, got ticket
+            if state == "403":  # loop ?
+                return {}
             prr = PermissionRegistrationResponse().from_json(resp.text)
             resp = self.client.authorization_data_request(user_and_sp,
                                                           prr["ticket"])
             if resp.status_code in (200, 201):
-                return self.get_info(user, requestor, attrs)
+                return self.get_info(user, requestor, attrs, "403")
 
         raise UMAError()
 

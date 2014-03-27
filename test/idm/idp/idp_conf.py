@@ -91,6 +91,7 @@ CONFIG = {
     "cert_file": "pki/mycert.pem",
     "metadata": {
         "local": ["../sp/sp.xml"],
+        "mdfile": ["/Users/rolandh/code/pysaml2/tests/swamid2.md"]
     },
     "organization": {
         "display_name": "Rolands Identiteter",

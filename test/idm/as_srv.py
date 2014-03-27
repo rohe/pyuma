@@ -4,6 +4,7 @@ import logging
 from urlparse import parse_qs
 
 from cherrypy import wsgiserver
+from oic.exception import AccessDenied
 from oic.utils.authn.authn_context import PASSWORD
 from oic.utils.authn.user import BasicAuthn
 from oic.utils.http_util import Response, InvalidCookieSign
@@ -124,8 +125,7 @@ def chose_permissions(environ, session):
         pass
 
 
-def set_permission(environ, session):
-    query = parse_qs(environ["QUERY_STRING"])
+def validate_user(query, environ, session, op):
     try:
         _user = query["user"][0]
     except KeyError:
@@ -138,7 +138,17 @@ def set_permission(environ, session):
                     authorization=authn_info)
                 _user = ident["uid"]
             except KeyError:
-                return authenticate(environ, session, "set_permission")
+                raise AccessDenied
+
+    return _user
+
+def set_permission(environ, session):
+    query = parse_qs(environ["QUERY_STRING"])
+
+    try:
+        _user = validate_user(query, environ, session, "set_permission")
+    except AccessDenied:
+        return authenticate(environ, session, "set_permission")
 
     perm = dict([(v, None) for v in query["perm"]])
     AUTHZSRV.store_permission(_user, query["sp_entity_id"][0], perm)
@@ -147,31 +157,49 @@ def set_permission(environ, session):
 
 def get_permissions(environ, session):
     query = parse_qs(environ["QUERY_STRING"])
-    try:
-        _user = query["user"][0]
-    except KeyError:
-        try:
-            _user = session["user"]
-        except KeyError:
-            try:
-                authn_info = environ["HTTP_AUTHORIZATION"]
-                ident = BasicAuthn(AUTHZSRV, azs.PASSWD).authenticated_as(
-                    authorization=authn_info)
-                _user = ident["uid"]
-            except KeyError:
-                return authenticate(environ, session, "get_permission")
 
-    res = AUTHZSRV.read_permissions(_user, query["sp_entity_id"][0],
+    try:
+        _user = validate_user(query, environ, session, "set_permission")
+    except AccessDenied:
+        return authenticate(environ, session, "set_permission")
+
+    res = AUTHZSRV.read_permissions(_user, query["requestor"][0],
                                     query["rsname"][0])
-    return Response()
+    return Response(res)
 
 
 def modify_permission(environ, session):
-    return Response()
+    query = parse_qs(environ["QUERY_STRING"])
+    if not query:
+        query = parse_qs(get_body(environ))
+
+    try:
+        _user = validate_user(query, environ, session, "set_permission")
+    except AccessDenied:
+        return authenticate(environ, session, "set_permission")
+
+    checkd = AUTHZSRV.rsid_permits(_user, query["requestor"][0])
+
+    _rsid = query["resource"][0]
+    rst = AUTHZSRV.resource_set_tree_by_rsid(_rsid)
+
+    return edit_permission_form(query["user"][0], rst, query["requestor"][0],
+                                AUTHZSRV.resource_set_name(_rsid), checkd)
 
 
 def delete_permissions(environ, session):
-    return Response()
+    query = parse_qs(environ["QUERY_STRING"])
+    if not query:
+        query = parse_qs(get_body(environ))
+
+    try:
+        _user = validate_user(query, environ, session, "set_permission")
+    except AccessDenied:
+        return authenticate(environ, session, "set_permission")
+
+    AUTHZSRV.rm_permission(_user, query["requestor"][0], query["resource"][0])
+
+    return Response("Permission removed"), {}
 
 
 def authenticate(environ, session, operation):
@@ -555,6 +583,7 @@ def application(environ, start_response):
             resp = None
             for service in AUTHZSRV.services():
                 if prepath == service:
+                    logger.info("Accessing %s" % service)
                     try:
                         resp, argv = ENDPOINT2CB[prepath](environ, session,
                                                           query)
@@ -584,7 +613,7 @@ from saml2.extension import ui
 import xmldsig
 import xmlenc
 
-from saml2.mdstore import MetaDataFile
+from saml2.mdstore import MetaDataFile, MetaDataMD
 
 ONTS = {
     saml.NAMESPACE: saml,
@@ -601,8 +630,23 @@ ONTS = {
 }
 
 
-def get_sp(item):
-    metad = MetaDataFile(ONTS.values(), item, item)
+def _cmp(item1, item2):
+    if item1[0] == item2[0]:
+        return 0
+    elif item1[0] > item2[0]:
+        return 1
+    else:
+        return -1
+
+
+def get_sp(item, typ):
+    if typ == "local":
+        metad = MetaDataFile(ONTS.values(), item, item)
+    elif typ == "mdfile":
+        metad = MetaDataMD(ONTS.values(), item, item)
+    else:
+        raise Exception("Don't do that format yet")
+
     metad.load()
     sps = []
     for entid, item in metad.entity.items():
@@ -629,7 +673,10 @@ def get_sp(item):
                                     "organization_url"][0]["text"]
                             except KeyError:
                                 pass
+                if not _name:
+                    _name = entid
                 sps.append((_name, entid))
+    sps.sort(_cmp)
     return sps
 
 
@@ -637,7 +684,8 @@ if __name__ == '__main__':
     SERVER_CERT = "../pki/server.crt"
     SERVER_KEY = "../pki/server.key"
     CA_BUNDLE = None
-    SPS = get_sp("sp/sp.xml")
+    SPS = get_sp("sp/sp.xml", "local")
+    SPS.extend(get_sp("/Users/rolandh/code/pysaml2/tests/swamid2.md", "mdfile"))
 
     # The UMA AS
     AUTHZSRV = azs.main(BASE, CookieHandler)

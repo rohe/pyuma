@@ -339,7 +339,10 @@ class SSO(Service):
                               state=_state)
 
             if isinstance(user_resp, oicResponse):
-                return user_resp(self.environ, self.start_response)
+                if user_resp.status == "200 OK":
+                    user_resp = json.loads(user_resp.message)["resource"]
+                else:
+                    return user_resp(self.environ, self.start_response)
 
             return self._identity(user_resp, resp_args, relay_state, session)
         else:
@@ -923,6 +926,7 @@ def application(environ, start_response):
         pass
 
     path = environ.get('PATH_INFO', '').lstrip('/')
+
     logger.info("<application> PATH: %s" % path)
 
     try:

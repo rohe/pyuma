@@ -105,7 +105,7 @@ def main(base, cookie_handler):
     ab.add("alice", DummyAuthn(None, "alice"))
     ab.add("roger", DummyAuthn(None, "roger"))
     ab.add("UserPwd",
-           UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
+           UsernamePasswordMako(None, "login_as.mako", LOOKUP, PASSWD,
                                 "%s/authorization" % base),
            10, "http://%s" % socket.gethostname())
     ab.add("BasicAuthn", BasicAuthnExtra(None, PASSWD), 10,

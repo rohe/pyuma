@@ -12,7 +12,7 @@ from cherrypy import wsgiserver
 
 from oic.oauth2.message import Message
 from oic.oauth2.message import AuthorizationResponse
-from oic.utils.http_util import Response
+from oic.utils.http_util import Response, Redirect
 from oic.utils.http_util import Forbidden
 from oic.utils.http_util import CookieDealer
 from oic.utils.http_util import BadRequest
@@ -24,7 +24,7 @@ from uma.message import PermissionRegistrationResponse
 from uma.resourcesrv import Unknown
 from uma.saml2uma import ErrorResponse
 from uma.resourcesrv import UnknownAuthzSrv
-import rs
+import json_rs
 
 __author__ = 'rolandh'
 
@@ -115,18 +115,6 @@ def opbyuid(environ, start_response):
 def application(environ, start_response):
     session = environ['beaker.session']
 
-    # try:
-    #     cookie = environ["HTTP_COOKIE"]
-    #     try:
-    #         _tmp = CookieHandler.get_cookie_value(cookie, COOKIE_NAME)
-    #     except InvalidCookieSign:
-    #         pass
-    #     else:
-    #         if _tmp:
-    #             session = eval(_tmp[0])
-    # except KeyError:
-    #     pass
-
     path = environ.get('PATH_INFO', '').lstrip('/')
 
     logger.info("PATH: %s" % path)
@@ -148,12 +136,26 @@ def application(environ, start_response):
 
     resp = None
 
-    if path == "":
+    if path == "" or path == "intro":
+        try:
+            _ = session["uid"]
+        except KeyError:
+            session["return_to"] = "intro"
+            resp = AUTHN(extra=["title", "host"], title="RS Authentication",
+                         host="the JSON resource server")
+            return resp(environ, start_response)
+
         return opbyuid(environ, start_response)
+    elif path == "verify":
+        if not query:
+            query = parse_qs(get_body(environ))
+        resp = AUTHN.verify(query, return_to=session["return_to"])
+        if isinstance(resp, Redirect):
+            session["uid"] = query["login"][0]
+        return resp(environ, start_response)
     elif path == "rp":  # has to be authenticated for this
         link = acr = ""
         if "uid" in query:
-            session["uid"] = query["uid"][0]
             if not "url" in query:
                 try:
                     link = RES_SRV.find_srv_discovery_url(
@@ -250,7 +252,8 @@ def application(environ, start_response):
                 except Exception, err:
                     raise
 
-            resp = Response("OK")
+            resp = Response(
+                "Resource sets registered at the Authorization Service")
         else:
             resp = BadRequest(aresp.to_json(), content="application/json")
     elif path == "login":  # local login
@@ -297,11 +300,13 @@ if __name__ == '__main__':
 
     #DATASET = JsonResourceServer(ROOT, "info", HOST)
 
-    AUTHN = UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
-                                 "%sauthorization" % HOST)
+    AUTHN = UsernamePasswordMako(None, "login_rs.mako", LOOKUP, PASSWD,
+                                 "%s/authorization" % HOST)
 
     # The UMA RS
-    RES_SRV = rs.main(HOST, CookieHandler)
+    RES_SRV = json_rs.main(HOST, CookieHandler)
+
+    AUTHN.srv = RES_SRV
 
     session_opts = {
         'session.type': 'memory',

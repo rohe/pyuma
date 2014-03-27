@@ -117,7 +117,7 @@ def chose_permissions(environ, session):
 
     if len(rs_list) == 1:
         rs = rs_list[0]
-        return edit_permission_form(_user, rs["name"], rs["scopes"], SPS[0][1])
+        return edit_permission_form(_user, rs["name"], rs["scopes"], REQUESTORS)
     else:
         # have to chose resource set first
         pass
@@ -420,7 +420,7 @@ def manage(uid, headers=None):
         "action": "action",
         "method": "POST",
         "rs_list": rs_list,
-        "req_list": SPS,
+        "req_list": REQUESTORS,
         "user": uid
     }
     return resp, argv
@@ -550,72 +550,11 @@ def application(environ, start_response):
 # -----------------------------------------------------------------------------
 
 
-from saml2 import saml
-from saml2 import md
-from saml2.extension import dri
-from saml2.extension import idpdisc
-from saml2.extension import mdattr
-from saml2.extension import mdrpi
-from saml2.extension import mdui
-from saml2.extension import shibmd
-from saml2.extension import ui
-import xmldsig
-import xmlenc
-
-from saml2.mdstore import MetaDataFile
-
-ONTS = {
-    saml.NAMESPACE: saml,
-    mdui.NAMESPACE: mdui,
-    mdattr.NAMESPACE: mdattr,
-    mdrpi.NAMESPACE: mdrpi,
-    dri.NAMESPACE: dri,
-    ui.NAMESPACE: ui,
-    idpdisc.NAMESPACE: idpdisc,
-    md.NAMESPACE: md,
-    xmldsig.NAMESPACE: xmldsig,
-    xmlenc.NAMESPACE: xmlenc,
-    shibmd.NAMESPACE: shibmd
-}
-
-
-def get_sp(item):
-    metad = MetaDataFile(ONTS.values(), item, item)
-    metad.load()
-    sps = []
-    for entid, item in metad.entity.items():
-        if "spsso_descriptor" in item:
-            for sp in item["spsso_descriptor"]:
-                _name = ""
-                try:
-                    for ee in sp["extensions"]["extension_elements"]:
-                        if ee["__class__"] == "%s&UIInfo" % mdui.NAMESPACE:
-                            _name = ee["description"][0]["text"]
-                except KeyError:
-                    pass
-                if not _name:
-                    try:
-                        _name = item["organization"][
-                            "organization_display_name"][0]["text"]
-                    except KeyError:
-                        try:
-                            _name = item["organization"][
-                                "organization_name"][0]["text"]
-                        except KeyError:
-                            try:
-                                _name = item["organization"][
-                                    "organization_url"][0]["text"]
-                            except KeyError:
-                                pass
-                sps.append((_name, entid))
-    return sps
-
-
 if __name__ == '__main__':
-    SERVER_CERT = "pki/server.crt"
-    SERVER_KEY = "pki/server.key"
+    SERVER_CERT = "../pki/server.crt"
+    SERVER_KEY = "../pki/server.key"
     CA_BUNDLE = None
-    SPS = get_sp("./sp/sp.xml")
+    REQUESTORS = ["bob", "roger"]
 
     # The UMA AS
     AUTHZSRV = as_base.main(BASE, CookieHandler)

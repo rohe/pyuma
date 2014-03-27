@@ -2,12 +2,12 @@
 
 startme() {
     ./as_srv.py &
-    ./json_rs.py &
+    ./pbryan.py &
 }
 
 stopme() {
     pkill -f "as_srv.py"
-    pkill -f "json_rs.py"
+    pkill -f "pbryan.py"
 }
 
 case "$1" in

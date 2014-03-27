@@ -20,14 +20,18 @@
                     <br>
                    The 'eduPersonPrincipalName' attribute if present is often used as a permanent identifier for you.
                 </p>
-                <table border='1'>
-                    % for attr, val in uinfo:
-                        <tr>
-                            <td>${attr}</td>
-                            <td>${val}</td>
-                        </tr>
-                    % endfor
-                </table>
+                % if uinfo:
+                    <table border='1'>
+                        % for attr, val in uinfo:
+                            <tr>
+                                <td>${attr}</td>
+                                <td>${val}</td>
+                            </tr>
+                        % endfor
+                    </table>
+                % else:
+                    <p><b>No indentity information was returned</b></p>
+                % endif
             </div>
             <div>
                 <ul>

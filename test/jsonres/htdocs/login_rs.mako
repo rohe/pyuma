@@ -1,6 +1,6 @@
 <html>
   <head>
-    <title>UMA AS Log in page</title>
+    <title>${title}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Bootstrap -->
     <link href="static/bootstrap/css/bootstrap.min.css" rel="stylesheet" media="screen">
@@ -20,7 +20,7 @@
     <div class="container">
      <!-- Main component for a primary marketing message or call to action -->
       <div class="jumbotron">
-        <h2>Please authenticate</h2>
+        <h2>Please authenticate at ${host}</h2>
     <form action="${action}" method="post" class="login form">
         <input type="hidden" name="query" value="${query}"/>
         <input type="hidden" name="acr_values" value="${acr}"/>

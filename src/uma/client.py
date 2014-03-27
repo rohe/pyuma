@@ -1,5 +1,6 @@
 import logging
 import urllib
+
 from oic.oauth2 import rndstr
 from oic.oauth2.exception import MissingSession
 from oic.oauth2 import dynreg
@@ -10,10 +11,19 @@ from uma.message import IntrospectionRequest
 from uma.message import PermissionRegistrationRequest
 from uma.message import ProviderConfiguration
 from uma.message import RPTResponse
-from uma import UMAError
+
 from uma import AAT
 from uma import PAT
 from uma.message import RPTRequest
+
+from oic.oic import AuthorizationResponse
+from oic.utils.authn.client import CLIENT_AUTHN_METHOD
+from oic.utils.http_util import Response
+from oic.utils.http_util import Redirect
+from oic.utils.http_util import R2C
+
+from uma import UMAError
+from uma.message import PermissionRegistrationResponse
 
 __author__ = 'rolandh'
 
@@ -56,7 +66,7 @@ class Client(dynreg.Client):
         self.token = {}
         self.behaviour = {
             "require_signed_request_object":
-            DEF_SIGN_ALG["openid_request_object"]}
+                DEF_SIGN_ALG["openid_request_object"]}
 
         self.registration_info = registration_info
         self.flow_type = flow_type
@@ -258,3 +268,107 @@ class Client(dynreg.Client):
         logger.debug("Registering RP")
         reg_info = self.register(dce, **self.registration_info)
         logger.debug("Registration response: %s" % reg_info)
+
+
+# the API to the UMA protected IDP system that the IdP uses
+
+
+class UMAClient():
+    def __init__(self, client_name, redirect_uris, acr="",
+                 verify_ssl=True):
+
+        # The UMA Client
+        reginfo = {
+            "client_name": client_name,
+            "application_type": "native",
+            "redirect_uris": redirect_uris
+        }
+
+        self.client = Client(
+            {}, client_authn_method=CLIENT_AUTHN_METHOD,
+            registration_info=reginfo, verify_ssl=verify_ssl)
+
+        self.client.redirect_uris = redirect_uris
+        self.acr = acr
+
+    def __call__(self, resource, requestor, oper="GET", **kwargs):
+        """
+        This is the main API
+
+        :param resource: resource definition
+        :param requestor: The entity_id of the SP that requests the information
+        :param attrs: which attributes to return
+        :param state: Where in the process am I
+        :param typ: Type of operation ['GET', 'POST', 'PUT', ..]
+        """
+        return self.operation(resource, requestor, oper, **kwargs)
+
+    def rs_query(self, resource, requestor, oper="GET", **kwargs):
+        """
+
+        :param resource: resource definition
+        :param requestor: an identifier representing the requestor
+        :param oper: HTTP operation ['GET', 'POST, ...]
+        """
+        try:
+            rpt = self.client.token[requestor]["RPT"]
+        except KeyError:
+            rpt = None
+
+        if rpt:
+            _args = {"headers": {"Authorization": "Bearer %s" % rpt}}
+        else:
+            _args = {}
+
+        return self.client.send(resource, oper, **_args)
+
+    def operation(self, resource, requestor, oper="GET", **kwargs):
+        """
+
+        :param owner: user identifier
+        :param requestor: The entity_id of the SP that requests the information
+        :param attrs: which attributes to return
+        :param state: Where in the process am I
+        """
+        try:
+            state = kwargs["state"]
+        except KeyError:
+            state = rndstr()
+            self.client.state[requestor] = state
+
+        resp = self.rs_query(resource, requestor, oper, **kwargs)
+
+        if resp.status_code == 200:
+            return Response(resp.text)
+
+        if resp.status_code == 401:  # No RPT
+            as_uri = resp.headers["as_uri"]
+            resp = self.client.acquire_grant(as_uri, "RPT", requestor, state,
+                                             self.acr)
+            if resp.status_code == 302:  # which it should be
+                # redirect that are part of the grant code flow
+                headers = [(a, b) for a, b in resp.headers.items()
+                           if a != "location"]
+                return Redirect(resp.headers["location"], headers=headers)
+            elif resp.status_code == 200:  # ???
+                return Response(resp.text)
+            else:
+                return R2C[resp.status_code](resp.text)
+
+        if resp.status_code == 403:  # Permission registered, got ticket
+            if state == "403":  # loop ?
+                return {}
+            prr = PermissionRegistrationResponse().from_json(resp.text)
+            resp = self.client.authorization_data_request(requestor,
+                                                          prr["ticket"])
+            if resp.status_code in (200, 201):
+                return self.operation(resource, requestor, oper, "403",
+                                      **kwargs)
+
+        raise UMAError()
+
+    def get_tokens(self, query):
+        aresp = AuthorizationResponse().from_urlencoded(query)
+        uid = self.client.acquire_access_token(aresp, "AAT")
+        self.client.get_rpt(uid)
+        return uid
