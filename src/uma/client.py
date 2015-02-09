@@ -1,7 +1,10 @@
+import base64
 import logging
-import urllib
+
+from oic import oic
 
 from oic.oauth2 import rndstr
+from oic.oauth2.message import AuthorizationRequest
 from oic.oauth2.exception import MissingSession
 from oic.oauth2 import dynreg
 from oic.oic.message import ProviderConfigurationResponse
@@ -16,11 +19,11 @@ from uma import AAT
 from uma import PAT
 from uma.message import RPTRequest
 
-from oic.oic import AuthorizationResponse
+from oic.oic import AuthorizationResponse, PARAMMAP
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.http_util import Response
 from oic.utils.http_util import Redirect
-from oic.utils.http_util import R2C
+#from oic.utils.http_util import R2C
 
 from uma import UMAError
 from uma.message import PermissionRegistrationResponse
@@ -48,8 +51,8 @@ class Client(dynreg.Client):
     """ An UMA client implementation based on OAuth2 with Dyn Reg.
     """
     #noinspection PyUnusedLocal
-    def __init__(self, client_id=None, ca_certs=None,
-                 client_authn_method=None, keyjar=None,
+    def __init__(self, client_id=None, ca_certs=None, client_prefs=None,
+                 client_authn_methods=None, keyjar=None,
                  server_info=None, authz_page="", flow_type="", password=None,
                  registration_info=None, response_type="", scope="",
                  verify_ssl=True):
@@ -58,10 +61,13 @@ class Client(dynreg.Client):
                   "response_type": response_type,
                   "scope": scope}
 
-        dynreg.Client.__init__(self, client_id, ca_certs, client_authn_method,
+        dynreg.Client.__init__(self, client_id, ca_certs, client_authn_methods,
                                keyjar, verify_ssl)
 
-        self.provider_info = {}
+        self.oidc_client = oic.Client(client_id, ca_certs, client_prefs,
+                                      client_authn_methods, keyjar, verify_ssl)
+
+        self.provider_info = None
         # token per user
         self.token = {}
         self.behaviour = {
@@ -78,11 +84,13 @@ class Client(dynreg.Client):
         self.client_secret = ""
         self.request2endpoint.update({
             "RegistrationRequest": "dynamic_client_endpoint",
-            "AuthorizationRequest": "user_endpoint",
-            "ResourceSetDescription": "resource_set_registration_endpoint",
+            "TokenRequest": "token_endpoint",
+            "AuthorizationRequest": "authorization_endpoint",
+            "RequestingPartyClaimsRequest": "requesting_party_claims_endpoint",
             "IntrospectionRequest": "introspection_endpoint",
+            "ResourceSetDescription": "resource_set_registration_endpoint",
             "PermissionRegistrationRequest": "permission_registration_endpoint",
-            "AuthorizationDataRequest": "authorization_data_request_endpoint",
+            #"AuthorizationDataRequest": "authorization_data_request_endpoint",
             "RPTRequest": "rpt_endpoint"
         })
 
@@ -105,11 +113,11 @@ class Client(dynreg.Client):
             else:
                 opc.update(pcr)
 
-            self.provider_info[opc["issuer"]] = opc
+            self.provider_info = opc
 
         if not self.client_secret:
             self.register(
-                self.provider_info[provider_url]["dynamic_client_endpoint"])
+                self.provider_info["dynamic_client_endpoint"])
 
     @staticmethod
     def get_uma_scope(token_type):
@@ -117,7 +125,7 @@ class Client(dynreg.Client):
             return UMA_SCOPE[token_type]
 
     def acquire_grant(self, resource_server, token_type, userid, state="",
-                      acr=PASSWORD):
+                      acr=PASSWORD, authn_method="", **kwargs):
         """
         Get a grant by which a PAT/AAT token later can be acquired from the
         server
@@ -127,16 +135,19 @@ class Client(dynreg.Client):
         :param userid: On behalf of which user
         :param state:
         :param acr: Authentication Context Reference
+        :param authn_method:
         """
+
+        self.init_relationship(resource_server)
 
         if userid not in self.token:
             self.token[userid] = {}
             token_type = "AAT"  # The first one I must have
         elif token_type == "RPT" and not "AAT" in self.token[userid]:
             # Must have AAT first
-            self.acquire_grant(resource_server, "AAT", userid, state, acr)
-
-        self.init_relationship(resource_server)
+            resp = self.acquire_grant(resource_server, "AAT", userid, state,
+                                      acr, authn_method, **kwargs)
+            return resp
 
         # And eventually do an Authorization request
         if not state:
@@ -150,14 +161,33 @@ class Client(dynreg.Client):
                         "state": state,
                         "acr_values": [acr]}
 
-        # Authenticate using HTTP basic authn
-        http_args = self.client_authn_method[
-            "client_secret_basic"](self).construct(
-                {}, request_args=request_args, user=urllib.quote(userid),
-                password="hemligt")
+        if authn_method:
+            narg = {"authn_method": authn_method,
+                    "user": userid}
+            try:
+                narg["password"] = kwargs["password"]
+            except KeyError:
+                pass
+        else:
+            narg = {}
 
-        return self.do_authorization_request(request_args=request_args,
-                                             http_args=http_args)
+        url, body, ht_args, csi = self.request_info(AuthorizationRequest,
+                                                    "GET", request_args, **narg)
+
+        if "headers" in ht_args:
+            if "auth" in ht_args["headers"]:
+                u, p = ht_args["headers"]["auth"]
+                ht_args["headers"]["Authorization"] = base64.b64encode(
+                    "Basic %s:%s" % (u, p))
+                del ht_args["headers"]["auth"]
+
+            ht_args = [(k, v) for k, v in ht_args["headers"].items()]
+        else:
+            ht_args = []
+
+        url = url.encode("utf8")
+        # construct the redirect
+        return Redirect(url, headers=ht_args)
 
     def acquire_access_token(self, aresp, token_type, userid=""):
         """
@@ -211,7 +241,7 @@ class Client(dynreg.Client):
 
     def authorization_data_request(self, userid, ticket):
         kwargs = self.create_authorization_data_request(userid, ticket)
-        url = self.provider_info.values()[0]["authorization_request_endpoint"]
+        url = self.provider_info["authorization_request_endpoint"]
         return self.send(url, "POST", **kwargs)
 
     def create_rpt_request(self, user):
@@ -221,7 +251,7 @@ class Client(dynreg.Client):
 
     def get_rpt(self, user):
         kwargs = self.create_rpt_request(user)
-        url = self.provider_info.values()[0]["rpt_endpoint"]
+        url = self.provider_info["rpt_endpoint"]
         resp = self.send(url, "POST", **kwargs)
 
         if resp.status_code == 200:
@@ -250,8 +280,14 @@ class Client(dynreg.Client):
             extra_args=None, **kwargs):
         return self.construct_request(request, request_args, extra_args)
 
-    def match_preferences(self, pcr=None, issuer=None):
+    def uma_match_preferences(self, pcr=None, issuer=None):
         pass
+
+    def match_preferences(self, pcr=None, issuer=None):
+        if isinstance(pcr, ProviderConfigurationResponse):
+            return self.oidc_client.match_preferences(pcr, issuer)
+        else:
+            return self.uma_match_preferences(pcr, issuer)
 
     def dynamic(self, authsrv):
         """ Do dynamic provider information gathering and client registration
@@ -285,11 +321,12 @@ class UMAClient():
         }
 
         self.client = Client(
-            {}, client_authn_method=CLIENT_AUTHN_METHOD,
+            {}, client_authn_methods=CLIENT_AUTHN_METHOD,
             registration_info=reginfo, verify_ssl=verify_ssl)
 
         self.client.redirect_uris = redirect_uris
         self.acr = acr
+        self.registration_response = None
 
     def __call__(self, resource, requestor, oper="GET", **kwargs):
         """
@@ -336,6 +373,11 @@ class UMAClient():
             state = rndstr()
             self.client.state[requestor] = state
 
+        try:
+            authn_method = kwargs["authn_method"]
+        except:
+            authn_method = ""
+
         resp = self.rs_query(resource, requestor, oper, **kwargs)
 
         if resp.status_code == 200:
@@ -344,16 +386,17 @@ class UMAClient():
         if resp.status_code == 401:  # No RPT
             as_uri = resp.headers["as_uri"]
             resp = self.client.acquire_grant(as_uri, "RPT", requestor, state,
-                                             self.acr)
-            if resp.status_code == 302:  # which it should be
-                # redirect that are part of the grant code flow
-                headers = [(a, b) for a, b in resp.headers.items()
-                           if a != "location"]
-                return Redirect(resp.headers["location"], headers=headers)
-            elif resp.status_code == 200:  # ???
-                return Response(resp.text)
-            else:
-                return R2C[resp.status_code](resp.text)
+                                             self.acr, authn_method)
+            return resp
+            # elif resp.status_code == 302:  # which it should be
+            #     # redirect that are part of the grant code flow
+            #     headers = [(a, b) for a, b in resp.headers.items()
+            #                if a != "location"]
+            #     return Redirect(resp.headers["location"], headers=headers)
+            # elif resp.status_code == 200:  # ???
+            #     return Response(resp.text)
+            # else:
+            #     return R2C[resp.status_code](resp.text)
 
         if resp.status_code == 403:  # Permission registered, got ticket
             if state == "403":  # loop ?
@@ -362,8 +405,7 @@ class UMAClient():
             resp = self.client.authorization_data_request(requestor,
                                                           prr["ticket"])
             if resp.status_code in (200, 201):
-                return self.operation(resource, requestor, oper, "403",
-                                      **kwargs)
+                return self.operation(resource, requestor, oper, **kwargs)
 
         raise UMAError()
 
@@ -372,3 +414,14 @@ class UMAClient():
         uid = self.client.acquire_access_token(aresp, "AAT")
         self.client.get_rpt(uid)
         return uid
+
+    def sign_enc_algs(self, typ):
+        resp = {}
+        for key, val in PARAMMAP.items():
+            try:
+                resp[key] = self.registration_response[val % typ]
+            except (TypeError, KeyError):
+                if key == "sign":
+                    resp[key] = DEF_SIGN_ALG["id_token"]
+        return resp
+

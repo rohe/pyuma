@@ -1,9 +1,10 @@
+#!/usr/bin/env python
 import base64
 import hashlib
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 
 from uma.client import Client
-from uma.resourcesrv import ResourceServer
+from uma.resourcesrv import ResourceServer1C
 
 __author__ = 'rolandh'
 
@@ -27,7 +28,7 @@ class DataSet(object):
     def __call__(self, owner, scopes, **kwargs):
         return "Some result"
 
-ressrv = ResourceServer(DataSet(), registration_info=reginfo)
+ressrv = ResourceServer1C(DataSet(), registration_info=reginfo)
 
 EPPN = "foo@example.com"
 

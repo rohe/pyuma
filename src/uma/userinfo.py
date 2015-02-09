@@ -41,7 +41,7 @@ class UMAUserInfo(SAMLUserInfo):
         self.resource_srv = resource_srv
         self.acr = acr
 
-    def __call__(self, user, requestor, attrs=None, state=""):
+    def __call__(self, user, requestor, attrs=None, state="", **kwargs):
         """
         This is the main API
 
@@ -50,7 +50,7 @@ class UMAUserInfo(SAMLUserInfo):
         :param attrs: which attributes to return
         :param state: Where in the process am I
         """
-        return self.get_info(user, requestor, attrs, state)
+        return self.get_info(user, requestor, attrs, state, **kwargs)
 
     def rs_query(self, sp_user, user, attr=None):
         """
@@ -72,7 +72,7 @@ class UMAUserInfo(SAMLUserInfo):
 
         return self.client.send(url, "GET", **kwargs)
 
-    def get_info(self, user, requestor, attrs=None, state=""):
+    def get_info(self, user, requestor, attrs=None, state="", **kwargs):
         """
 
         :param user: user identifier
@@ -85,22 +85,27 @@ class UMAUserInfo(SAMLUserInfo):
         user_and_sp = "%s@%s" % (user, requestor)
         resp = self.rs_query(user_and_sp, user, attrs)
 
+        args = {}
+        for attr in ["authn_method", "password"]:
+            try:
+                args[attr] = kwargs[attr]
+            except KeyError:
+                args[attr] = ""
+
         if resp.status_code == 200:
             return Response(resp.text)
 
         if resp.status_code == 401:  # No RPT
             as_uri = resp.headers["as_uri"]
-            resp = self.client.acquire_grant(as_uri, "RPT", user_and_sp, state,
-                                             self.acr)
-            if resp.status_code == 302:  # which it should be
+            return self.client.acquire_grant(as_uri, "RPT", user_and_sp, state,
+                                             self.acr, **args)
+            #if isinstance(resp, Redirect):  # which it should be
                 # redirect that are part of the grant code flow
-                headers = [(a, b) for a, b in resp.headers.items()
-                           if a != "location"]
-                return Redirect(resp.headers["location"], headers=headers)
-            elif resp.status_code == 200:  # ???
-                return Response(resp.text)
-            else:
-                return R2C[resp.status_code](resp.text)
+            #    return resp
+            # elif resp.status_code == 200:  # ???
+            #     return Response(resp.text)
+            # else:
+            #     return R2C[resp.status_code](resp.text)
 
         if resp.status_code == 403:  # Permission registered, got ticket
             if state == "403":  # loop ?

@@ -387,12 +387,12 @@ class ResourceServerBase(object):
 
 class ResourceServer1C(ResourceServerBase, Client):
     def __init__(self, dataset, symkey="", client_id=None,
-                 ca_certs=None, client_authn_method=None, keyjar=None,
+                 ca_certs=None, client_authn_methods=None, keyjar=None,
                  server_info=None, authz_page="", flow_type="", password=None,
                  registration_info=None, response_type="", scope="",
                  **kwargs):
         ResourceServerBase.__init__(self, dataset, symkey)
-        Client.__init__(self, client_id, ca_certs, client_authn_method, keyjar,
+        Client.__init__(self, client_id, ca_certs, client_authn_methods, keyjar,
                         server_info, authz_page, flow_type, password,
                         registration_info, response_type, scope)
         self.kwargs = kwargs

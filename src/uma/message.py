@@ -28,12 +28,12 @@ class ProviderConfiguration(Message):
         "claim_profiles_supported": OPTIONAL_LIST_OF_STRINGS,
         "dynamic_client_endpoint": SINGLE_OPTIONAL_STRING,
         "token_endpoint": SINGLE_REQUIRED_STRING,
-        "user_endpoint": SINGLE_REQUIRED_STRING,
-        "resource_set_registration_endpoint": SINGLE_REQUIRED_STRING,
+        "authorization_endpoint": SINGLE_REQUIRED_STRING,
+        "requesting_party_claims_endpoint": SINGLE_OPTIONAL_STRING,
         "introspection_endpoint": SINGLE_REQUIRED_STRING,
+        "resource_set_registration_endpoint": SINGLE_REQUIRED_STRING,
         "permission_registration_endpoint": SINGLE_REQUIRED_STRING,
-        "rpt_endpoint": SINGLE_REQUIRED_STRING,
-        "authorization_request_endpoint": SINGLE_REQUIRED_STRING
+        "rpt_endpoint": SINGLE_REQUIRED_STRING
         }
 
 
@@ -81,17 +81,17 @@ class ResourceSetDescription(Message):
         "icon_uri": SINGLE_OPTIONAL_STRING,
         "scopes": REQUIRED_LIST_OF_STRINGS,
         "type": SINGLE_OPTIONAL_STRING,
-        "member": OPTIONAL_MESSAGE,
+        #"member": OPTIONAL_MESSAGE,
         "_id": SINGLE_OPTIONAL_STRING,
         "_rev": SINGLE_OPTIONAL_STRING,
-        "subsets": OPTIONAL_LIST_OF_STRINGS
+        #"subsets": OPTIONAL_LIST_OF_STRINGS
     }
 
 
 class StatusResponse(Message):
     c_param = {
         "status": SINGLE_REQUIRED_STRING,
-        "_id": SINGLE_REQUIRED_STRING,
+            "_id": SINGLE_REQUIRED_STRING,
         "_rev": SINGLE_REQUIRED_STRING,
         "policy_uri": SINGLE_OPTIONAL_STRING
     }
@@ -198,6 +198,15 @@ class ErrorResponse(Message):
     }
 
 
+class RequestingPartyClaimsRequest(Message):
+    c_param = {
+    }
+
+
+class RequestingPartyClaimsResponse(Message):
+    c_param = {
+    }
+
 MSG = {
     "ProviderConfiguration": ProviderConfiguration,
     "Scope": Scope,
@@ -210,7 +219,9 @@ MSG = {
     "RPTResponse": RPTResponse,
     "RPTRequest": RPTRequest,
     "AuthorizationDataRequest": AuthorizationDataRequest,
-    "AuthorizationDataResponse": AuthorizationDataResponse
+    "AuthorizationDataResponse": AuthorizationDataResponse,
+    "RequestingPartyClaimsRequest": RequestingPartyClaimsRequest,
+    "RequestingPartyClaimsResponse": RequestingPartyClaimsResponse
 }
 
 

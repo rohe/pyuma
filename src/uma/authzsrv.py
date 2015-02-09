@@ -6,11 +6,15 @@ import time
 
 from oic.oauth2.dynreg import Provider as OAUTH2Provider
 from oic.oic.provider import Provider as OIDCProvider
+from oic.oic.provider import TokenEndpoint
+from oic.oic.provider import AuthorizationEndpoint
 
 from oic.oauth2 import MessageException
 from oic.oauth2 import TokenErrorResponse
 from oic.oauth2 import rndstr
+from oic.oauth2 import dynreg
 from oic.oauth2.provider import Endpoint
+from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.authn.user import ToOld
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import Created
@@ -26,7 +30,6 @@ from uma.message import AuthorizationDataRequest
 from uma.message import IntrospectionResponse
 from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
-from uma.message import RPTResponse
 from uma.resource_set import ResourceSetDB
 
 __author__ = 'rolandh'
@@ -54,10 +57,6 @@ class UnknownResourceSet(Exception):
     pass
 
 
-class AuthorizationRequestEndpoint(Endpoint):
-    etype = "authorization_request"
-
-
 class ResourceSetRegistrationEndpoint(Endpoint):
     etype = "resource_set_registration"
 
@@ -74,20 +73,21 @@ class RPTEndpoint(Endpoint):
     etype = "rpt"
 
 
-class UserEndpoint(Endpoint):
-    etype = "user"
-
-
 class DynamicClientEndpoint(Endpoint):
     etype = "dynamic_client"
 
 
-class AuthorizationDataRequestEndpoint(Endpoint):
-    etype = "authorization_data_request"
+class RequestingPartyClaimsEndpoint(Endpoint):
+    etype = "requesting_party_claims"
+
+
+class ClientInfoEndpoint(Endpoint):
+    etype = "clientinfo"
 
 
 RSR_PATH = "%s/resource_set/" % ResourceSetRegistrationEndpoint(None).etype
 PLEN = len(RSR_PATH)
+
 
 def eval_scopes(permission, allow_scopes):
     _scopes = []
@@ -142,7 +142,7 @@ class Session(object):
         _info = self.db[item]
         now = time.time()
         if _info["expires_at"] < now:
-            raise ToOld()
+            raise ToOld("Already expired")
 
         if "permissions" in _info:
             _perms = []
@@ -219,24 +219,30 @@ class Permission(object):
 
         _perm = self.db[owner]["permit"]
 
+        _val = (scopes, time.time())
         try:
-            _perm[requestor][resource_id] = scopes
+            _perm[requestor][resource_id] = _val
         except KeyError:
             try:
-                _perm[requestor] = {resource_id: scopes}
+                _perm[requestor] = {resource_id: _val}
             except KeyError:
-                self.db[owner]["permit"] = {requestor: {resource_id: scopes}}
-        self.db[owner]["permitted_at"] = time.time()
+                self.db[owner]["permit"] = {requestor: {resource_id: _val}}
 
     def get_permit(self, owner, requestor, resource_id):
+        """
+        :return: A tuple (scopes, timestamp)
+        """
         return self.db[owner]["permit"][requestor][resource_id]
 
     def get_permit_by_requestor(self, owner, requestor):
+        """
+        :return: A dictionary with resource_id as keys and the tuple
+        (scopes, timestamp) as values
+        """
         return self.db[owner]["permit"][requestor]
 
     def delete_permit(self, owner, requestor, resource_id):
         del self.db[owner]["permit"][requestor][resource_id]
-        self.db[owner]["permitted_at"] = time.time()
 
     def delete_permit_by_resource_id(self, owner, resource_id):
         for req, spec in self.db[owner]["permit"].items():
@@ -246,13 +252,9 @@ class Permission(object):
     def get_permits(self, owner):
         """
         :param owner: The owner of the resource
-        :return: A dictionary with requestors as keys and list of resource_ids
-            as values
+        :return: A dictionary with requestors as keys and permissions as keys
         """
-        res = {}
-        for requestor, info in self.db[owner]["permit"].items():
-            res[requestor] = info.keys()
-        return res
+        return self.db[owner]["permit"]
 
     def set_accepted(self, owner, rpt, authz_desc):
         if owner not in self.db:
@@ -284,17 +286,36 @@ class Permission(object):
                     return owner
 
     def get_rsid_permits(self, owner, requestor):
+        """
+        :return: list of resource set ids
+        """
         try:
             return self.db[owner]["permit"][requestor].keys()
         except KeyError:
             return []
 
 
+def get_requester(foo):
+    return foo
+
+
+def authenticated_call(sdb, func, authn, request=None, **kwargs):
+    try:
+        entity, client_id = client_authentication(sdb, authn)
+    except AuthnFailed:
+        return Unauthorized()
+    else:
+        kwargs["entity"] = entity
+        kwargs["client_id"] = client_id
+        kwargs["request"] = request
+    return func(entity, **kwargs)
+
+
 class UmaAS(object):
-    endp = [ResourceSetRegistrationEndpoint, IntrospectionEndpoint,
-            RPTEndpoint, PermissionRegistrationEndpoint,
-            AuthorizationRequestEndpoint, UserEndpoint,
-            DynamicClientEndpoint, AuthorizationDataRequestEndpoint]
+    endp = [AuthorizationEndpoint, DynamicClientEndpoint,
+            IntrospectionEndpoint, PermissionRegistrationEndpoint,
+            RequestingPartyClaimsEndpoint, ResourceSetRegistrationEndpoint,
+            RPTEndpoint, TokenEndpoint, ClientInfoEndpoint]
 
     def __init__(self, configuration=None, baseurl=""):
 
@@ -310,6 +331,7 @@ class UmaAS(object):
         self.map_id_rsid = {}
         self.map_user_id = {}
         self.eid2rpt = {}
+        self.get_requester = get_requester
 
     def endpoints(self):
         for endp in self.endp:
@@ -319,26 +341,26 @@ class UmaAS(object):
         for endp in self.endp:
             yield endp.etype
 
-    def rpt_endpoint_(self, requestor, client_id, **kwargs):
-        """
-        The endpoint URI at which the client asks the authorization server for
-        a RPT.
-        """
-        #res = self.client_authentication(authn)
-        #if isinstance(res, Response):
-        #    return res
+    # def rpt_endpoint_(self, requestor, client_id, **kwargs):
+    #     """
+    #     The endpoint URI at which the client asks the authorization server for
+    #     a RPT.
+    #     """
+    #     #res = self.client_authentication(authn)
+    #     #if isinstance(res, Response):
+    #     #    return res
+    #
+    #     # create RPT, just overwrites whatever was there before
+    #     rpt = rndstr(32)
+    #     self.rpt[rpt] = {"requestor": requestor, "client_id": client_id}
+    #     self.session.set(rpt)
+    #
+    #     msg = RPTResponse(rpt=rpt)
+    #     return Response(msg.to_json(), content="application/json")
 
-        # create RPT, just overwrites whatever was there before
-        rpt = rndstr(32)
-        self.rpt[rpt] = {"requestor": requestor, "client_id": client_id}
-        self.session.set(rpt)
-
-        msg = RPTResponse(rpt=rpt)
-        return Response(msg.to_json(), content="application/json")
-
-    def resource_set_registration_endpoint_(self, path, method, body="",
-                                            owner="", client_id="",
-                                            if_match="", **kwargs):
+    def resource_set_registration_endpoint_(self, entity, path, client_id,
+                                            method, body, if_match,
+                                            **kwargs):
         """
         The endpoint at which the resource server handles resource sets
         descriptions.
@@ -352,6 +374,7 @@ class UmaAS(object):
         :param kwargs: possible other arguments
         :returns: A Response instance
         """
+
         # path should be /resource_set/{rsid}
         # Path may or may not start with '/'
         if path.startswith("/"):
@@ -364,7 +387,7 @@ class UmaAS(object):
         if rsid.startswith("/"):
             rsid = rsid[1:]
 
-        _user = safe_name("%s:%s" % (owner, client_id))
+        _user = safe_name("%s:%s" % (entity, client_id))
         logger.debug("handling resource set belonging to '%s'" % _user)
         self.resource_set.set_collection(_user)
         if method == "PUT":
@@ -407,13 +430,13 @@ class UmaAS(object):
                 self.map_rsid_id[rsid] = _id
                 self.map_id_rsid[_id] = rsid
                 try:
-                    self.map_user_id[owner].append(_id)
+                    self.map_user_id[entity].append(_id)
                 except KeyError:
-                    self.map_user_id[owner] = [_id]
+                    self.map_user_id[entity] = [_id]
             elif func == self.resource_set.delete:
                 # As a side effect all permissions assigned that references
                 # this resource set should be deleted
-                self.permit.delete_permit_by_resource_id(owner, rsid)
+                self.permit.delete_permit_by_resource_id(entity, rsid)
 
             response = Response(body.to_json(), content="application/json")
 
@@ -490,21 +513,21 @@ class UmaAS(object):
     def permits_by_user(self, owner):
         """
         :param owner: The owner of the resource
-        :return: A dictionary with requestors as keys and list of resource_ids
-            as values
+        :return: A dictionary with requestors as keys and permissions as values
         """
         return self.permit.get_permits(owner)
 
     def authz_session_info(self, token):
         pass
 
-    def introspection_endpoint_(self, request="", requestor="", **kwargs):
+    def introspection_endpoint_(self, entity, **kwargs):
         """
         The endpoint URI at which the resource server introspects an RPT
         presented to it by a client.
         """
 
-        logger.debug("requestor: %s, request: %s" % (requestor, request))
+        request = kwargs["request"]
+        logger.debug("requestor: %s, request: %s" % (entity, request))
         ir = IntrospectionRequest().from_json(request)
         try:
             _info = self.session.get(ir["token"])
@@ -514,7 +537,7 @@ class UmaAS(object):
             )
             try:
                 #requestor = self.rpt[ir["token"]]["requestor"]
-                perms = self.permit.get_accepted(requestor, ir["token"])
+                perms = self.permit.get_accepted(entity, ir["token"])
             except KeyError:
                 pass
             else:
@@ -534,21 +557,21 @@ class UmaAS(object):
 
         return response
 
-    def permission_registration_endpoint_(self, request="", requestor="",
-                                          client_id="", **kwargs):
+    def permission_registration_endpoint_(self, entity, **kwargs):
         """
         The endpoint URI at which the resource server registers a
         client-requested permission with the authorization server.
         This is a proposed permission waiting for the user to accept it.
         """
+        request = kwargs["request"]
         _ticket = rndstr(24)
         logging.debug("Registering permission request: %s" % request)
         resp = PermissionRegistrationResponse(ticket=_ticket)
-        self.permit.add_request(requestor, _ticket, request)
+        self.permit.add_request(entity, _ticket, request)
 
         return Created(resp.to_json(), content="application/json")
 
-    def user_endpoint(self, request="", **kwargs):
+    def requesting_party_claims_endpoint(self, request="", **kwargs):
         """
         The endpoint at which the resource server gathers the consent of
         the end-user resource owner or the client gathers the consent of the
@@ -558,6 +581,12 @@ class UmaAS(object):
         pass
 
     def dynamic_client_endpoint(self, request="", **kwargs):
+        pass
+
+    def token_endpoint(self, request="", **kwargs):
+        pass
+
+    def authorization_endpoint(self, request="", **kwargs):
         pass
 
     @staticmethod
@@ -586,10 +615,12 @@ class UmaAS(object):
 
         return None
 
-    def create_providerinfo(self, pcr_class=ProviderConfiguration):
-        _response = pcr_class(**self.conf_info)
+    def create_uma_providerinfo(self, pcr_class=ProviderConfiguration):
+        kwargs = dict([(k, v) for k, v in self.conf_info.items()
+                       if k in pcr_class.c_param])
+        _response = pcr_class(**kwargs)
 
-        for endp in self.endp:
+        for endp in UmaAS.endp:
             _e = endp(None)
             _response[_e.name] = "%s%s" % (self.baseurl, _e.etype)
 
@@ -600,7 +631,7 @@ class UmaAS(object):
     def providerinfo_endpoint_(self, handle="", **kwargs):
         logger.debug("@providerinfo_endpoint")
         try:
-            _response = self.create_providerinfo()
+            _response = self.create_uma_providerinfo()
 
             headers = [("Cache-Control", "no-store"), ("x-ffo", "bar")]
             #if handle:
@@ -626,7 +657,7 @@ class UmaAS(object):
         except KeyError:
             return res
 
-        for permit, _scopes in permits.items():
+        for permit, (_scopes, time_stamp) in permits.items():
             _scs = []
             for scope in scopes:
                 try:
@@ -647,8 +678,7 @@ class UmaAS(object):
 
         self.permit.set_accepted(owner, rpt, perm)
 
-    def authorization_data_request_endpoint_(self, request="", requestor="",
-                                             client_id="", **kwargs):
+    def rpt_endpoint_(self, entity, **kwargs):
         """
         Registers an Authorization Description
 
@@ -658,7 +688,7 @@ class UmaAS(object):
         :return: A Response instance
         """
 
-        adr = AuthorizationDataRequest().from_json(request)
+        adr = AuthorizationDataRequest().from_json(kwargs["request"])
         owner = self.permit.get_owner_of_request_target(adr["ticket"])
 
         # Get request permission that the resource server has registered
@@ -681,14 +711,14 @@ class UmaAS(object):
 
         # Is there any permissions registered by the owner, if so verify
         # that it allows what is requested. Return what is allowed !
-        sp_entity_id = requestor.split("@")[1]
+        _requester = self.get_requester(entity)
 
         try:
-            allow_scopes = self.permit.get_permit(
-                owner, sp_entity_id, permission["resource_set_id"])
+            allow_scopes, timestamp = self.permit.get_permit(
+                owner, _requester, permission["resource_set_id"])
         except KeyError:  #
             if "subsets" in rsd:  # complex resource set
-                permissions = self.get_subsets(owner, sp_entity_id,
+                permissions = self.get_subsets(owner, _requester,
                                                permission["scopes"])
                 for rsid, scopes in permissions.items():
                     self.register_permission(owner, adr["rpt"], rsid, scopes)
@@ -704,11 +734,11 @@ class UmaAS(object):
                 else:
                     _scopes.append(scope)
 
-            # bind sp_entity_id to specific RPT for this user
+            # bind _requester to specific RPT for this user
             try:
-                self.eid2rpt[owner][sp_entity_id] = adr["rpt"]
+                self.eid2rpt[owner][_requester] = adr["rpt"]
             except KeyError:
-                self.eid2rpt[owner] = {sp_entity_id: adr["rpt"]}
+                self.eid2rpt[owner] = {_requester: adr["rpt"]}
 
             self.register_permission(owner, adr["rpt"],
                                      permission["resource_set_id"], _scopes)
@@ -797,7 +827,6 @@ class UmaAS(object):
     def rsid_permits(self, user, requestor):
         return self.permit.get_rsid_permits(user, requestor)
 
-
 # ----------------------------------------------------------------------------
 
 
@@ -806,7 +835,8 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
                  client_authn, symkey, urlmap=None, keyjar=None,
                  hostname="", configuration=None, base_url="",
                  client_authn_methods=None, authn_at_registration="",
-                 client_info_url="", secret_lifetime=86400):
+                 client_info_url="", secret_lifetime=86400,
+                 default_acr=""):
 
         OAUTH2Provider.__init__(self, name, sdb, cdb, authn_broker, authz,
                                 client_authn, symkey=symkey, urlmap=urlmap,
@@ -825,6 +855,7 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
         self.jwks_uri = []
         self.endp = UmaAS.endp[:]
         self.endp.extend(OAUTH2Provider.endp)
+        self.default_acr = default_acr
 
     def set_authn_broker(self, authn_broker):
         self.authn_broker = authn_broker
@@ -882,54 +913,61 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
             return Unauthorized()
 
         return self.permission_registration_endpoint_(request, owner,
-                                                      client_id, **kwargs)
+                                                      client_id=client_id,
+                                                      **kwargs)
 
-    def authorization_data_request_endpoint(self, request="", authn="",
-                                            **kwargs):
-        try:
-            owner, client_id = client_authentication(self.sdb, authn)
-        except AuthnFailed:
-            return Unauthorized()
-
-        return self.authorization_data_request_endpoint_(request, owner,
-                                                         client_id,
-                                                         **kwargs)
+    # def authorization_data_request_endpoint(self, request="", authn="",
+    #                                         **kwargs):
+    #     try:
+    #         owner, client_id = client_authentication(self.sdb, authn)
+    #     except AuthnFailed:
+    #         return Unauthorized()
+    #
+    #     return self.authorization_data_request_endpoint_(request, owner,
+    #                                                      client_id,
+    #                                                      **kwargs)
 
     def uma_providerinfo_endpoint(self, handle="", **kwargs):
         return self.providerinfo_endpoint_(handle, **kwargs)
 
 
-class OIDCUmaAS(OIDCProvider, UmaAS):
-    def __init__(self, name, sdb, cdb, authn_broker, userinfo, authz,
+class OidcDynRegUmaAS(UmaAS):
+    def __init__(self, base, sdb, cdb, authn_broker, userinfo, authz,
                  client_authn, symkey, urlmap=None, keyjar=None,
                  hostname="", configuration=None, ca_certs="",
                  template_lookup=None, verify_login_template=None,
                  base_url=""):
 
-        OIDCProvider.__init__(self, name, sdb, cdb, authn_broker, userinfo,
-                              authz, client_authn, symkey, urlmap, ca_certs,
-                              keyjar, hostname, template_lookup,
-                              verify_login_template)
         UmaAS.__init__(self, configuration, baseurl=base_url)
 
+        self.sdb = sdb
         if keyjar:
             self.keyjar = keyjar
         else:
             self.keyjar = KeyJar()
 
+        self.cookie_name = self.__class__.__name__
         self.hostname = hostname or socket.gethostname
-        #self.jwks_uri = []
+        self.jwks_uri = []
         self.endp = UmaAS.endp[:]
-        self.endp.extend(OIDCProvider.endp)
 
-    #def set_authn_broker(self, authn_broker):
-    #    self.authn_broker = authn_broker
-    #    for meth in self.authn_broker:
-    #        meth.srv = self
-    #    if authn_broker:
-    #        self.cookie_func = authn_broker[0].create_cookie
-    #    else:
-    #        self.cookie_func = None
+        self.srv = {
+            "oidc": OIDCProvider(
+                base, sdb, cdb, authn_broker, userinfo,
+                authz, client_authn, symkey, urlmap, ca_certs,
+                keyjar, hostname, template_lookup, verify_login_template),
+            "dyn_reg": dynreg.Provider(
+                base, sdb, cdb, authn_broker, authz, client_authn,
+                symkey, urlmap,
+                client_authn_methods=CLIENT_AUTHN_METHOD)}
+
+        self.endp.extend(self.srv["oidc"].endp)
+        self.endp = list(set(self.endp))
+        self.srv["oidc"].jwks_uri = self.jwks_uri
+        self.srv["oidc"].baseurl = base
+
+        self.request2endpoint = dict(
+            [(e.__class__.__name__, "%s_endpoint" % e.etype) for e in self.endp])
 
     def user_from_bearer_token(self, authn=""):
         if not authn:
@@ -954,62 +992,44 @@ class OIDCUmaAS(OIDCProvider, UmaAS):
         """
         :param auth: authentication information
         """
-        try:
-            owner, client_id = client_authentication(self.sdb, authn)
-        except AuthnFailed:
-            return Unauthorized()
-
-        return self.rpt_endpoint_(owner, client_id, **kwargs)
+        return authenticated_call(self.sdb, self.rpt_endpoint_, authn,
+                                       **kwargs)
 
     def introspection_endpoint(self, request="", authn="", **kwargs):
-        try:
-            owner, client_id = client_authentication(self.sdb, authn)
-        except AuthnFailed:
-            return Unauthorized()
-        return self.introspection_endpoint_(request, owner, **kwargs)
-
-    #def create_providerinfo(self):
-    #    _response = OIDCProvider.create_providerinfo(self, pcr_class)
-    #    _response.update(self.conf_info)
-    #
-    #    for endp in self.endp:
-    #        _response[endp(None).name] = "%s%s" % (self.baseurl, endp.etype)
-    #
-    #    logger.info("provider_info_response: %s" % (_response.to_dict(),))
-    #    return _response
+        return authenticated_call(self.sdb, self.introspection_endpoint_,
+                                       authn, request, **kwargs)
 
     def uma_providerinfo_endpoint(self, handle="", **kwargs):
         return self.providerinfo_endpoint_(handle, **kwargs)
 
-    def resource_set_registration_endpoint(self, path, method, authn, body="",
-                                           if_match="", **kwargs):
-        try:
-            owner, client_id = client_authentication(self.sdb, authn)
-        except AuthnFailed:
-            return Unauthorized()
+    def oidc_providerinfo_endpoint(self, handle="", **kwargs):
+        return self.srv["oidc"].providerinfo_endpoint(handle, **kwargs)
 
-        return self.resource_set_registration_endpoint_(path, method, body,
-                                                        owner, client_id,
-                                                        if_match, **kwargs)
+    def resource_set_registration_endpoint(self, authn, **kwargs):
 
-    def dynamic_client_endpoint(self, request="", environ=None, **kwargs):
-        return self.registration_endpoint(request, environ, **kwargs)
+        return authenticated_call(
+            self.sdb, self.resource_set_registration_endpoint_, authn, **kwargs)
+
+    def oidc_registration_endpoint(self, request="", environ=None, **kwargs):
+        return self.srv["oidc"].registration_endpoint(request, environ,
+                                                      **kwargs)
+
+    def oauth_registration_endpoint(self, request="", environ=None, **kwargs):
+        return self.srv["dyn_reg"].registration_endpoint(request, environ,
+                                                         **kwargs)
 
     def permission_registration_endpoint(self, request="", authn="", **kwargs):
-        try:
-            owner, client_id = client_authentication(self.sdb, authn)
-        except AuthnFailed:
-            return Unauthorized()
+        return authenticated_call(
+            self.sdb, self.permission_registration_endpoint_, authn, request,
+            **kwargs)
 
-        return self.permission_registration_endpoint_(request, owner,
-                                                      client_id, **kwargs)
+    def authorization_endpoint(self, request="", **kwargs):
+        return self.srv["oidc"].authorization_endpoint(request, **kwargs)
 
-    def authorization_data_request_endpoint(self, request="", authn="",
-                                            **kwargs):
-        try:
-            owner, client_id = client_authentication(self.sdb, authn)
-        except AuthnFailed:
-            return Unauthorized()
+    def token_endpoint(self, request="", **kwargs):
+        return self.srv["oidc"].token_endpoint(request, **kwargs)
 
-        return self.authorization_data_request_endpoint_(request, owner,
-                                                         client_id, **kwargs)
+    def client_info_endpoint(self, request, environ, method, query):
+        _srv = self.srv["dyn_reg"]
+        return _srv.client_info_endpoint(request, environ, method, query)
+

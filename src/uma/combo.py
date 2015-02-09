@@ -46,7 +46,6 @@ def trace(func, from_to, **kwargs):
     return json.dumps(info)
 
 
-
 class UmaCAS(object):
     def __init__(self, name, sdb, cdb, authn_broker, authz,
                  client_authn, symkey, urlmap=None, as_keyjar=None,
@@ -286,3 +285,28 @@ class UmaCRS(object):
                                           path):
         self.ressrv.register_resource_set_description(owner,
                                                       resource_set_descr, path)
+
+
+class UmaASRS(object):
+    def __init__(self, dataset, symkey="", rs_keyjar=None, baseurl="",
+                 # client conf below
+                 client_id=None, ca_certs=None,
+                 client_authn_method=None, c_keyjar=None,
+                 server_info=None, authz_page="", flow_type="", password=None,
+                 registration_info=None, response_type="", scope="",
+                 ca_bundle=None):
+
+        self.ressrv = ResourceServer1C.__init__(
+            dataset, symkey, client_id, ca_certs, client_authn_method,
+            rs_keyjar, server_info, authz_page, flow_type, password,
+            registration_info, response_type, scope, baseurl)
+
+        self.authzsrv = OAuth2UmaAS(name, sdb, cdb, authn_broker, authz,
+                                    client_authn, symkey, urlmap,
+                                    as_keyjar, configuration=as_configuration,
+                                    base_url=base_url,
+                                    client_authn_methods=client_authn_methods,
+                                    authn_at_registration=authn_at_registration,
+                                    client_info_url=client_info_url,
+                                    secret_lifetime=secret_lifetime)
+
