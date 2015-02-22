@@ -9,7 +9,7 @@ from oic.oauth2.exception import MissingSession
 from oic.oauth2 import dynreg
 from oic.oic.message import ProviderConfigurationResponse
 from oic.utils.authn.authn_context import PASSWORD
-from uma.message import AuthorizationDataRequest
+from uma.message import AuthorizationDataRequest, ResourceSetDescription
 from uma.message import IntrospectionRequest
 from uma.message import PermissionRegistrationRequest
 from uma.message import ProviderConfiguration
@@ -278,6 +278,11 @@ class Client(dynreg.Client):
     def construct_AuthorizationDataRequest(
             self, request=AuthorizationDataRequest, request_args=None,
             extra_args=None, **kwargs):
+        return self.construct_request(request, request_args, extra_args)
+
+    def construct_ResourceSetDescription(self, request=ResourceSetDescription,
+                                  request_args=None, extra_args=None,
+                                  **kwargs):
         return self.construct_request(request, request_args, extra_args)
 
     def uma_match_preferences(self, pcr=None, issuer=None):

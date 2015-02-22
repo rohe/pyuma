@@ -7,8 +7,6 @@ from oic.oauth2 import SINGLE_REQUIRED_STRING
 from oic.oauth2 import SINGLE_OPTIONAL_STRING
 from oic.oauth2 import dynreg
 from oic.oic.message import msg_ser
-from oic.oic.message import json_ser
-from oic.oic.message import json_deser
 from oic.oic.message import SINGLE_REQUIRED_INT
 from oic.oic.message import SINGLE_OPTIONAL_BOOLEAN
 from oic.oic.message import ProviderConfigurationResponse
@@ -91,7 +89,7 @@ class ResourceSetDescription(Message):
 class StatusResponse(Message):
     c_param = {
         "status": SINGLE_REQUIRED_STRING,
-            "_id": SINGLE_REQUIRED_STRING,
+        "_id": SINGLE_REQUIRED_STRING,
         "_rev": SINGLE_REQUIRED_STRING,
         "policy_uri": SINGLE_OPTIONAL_STRING
     }

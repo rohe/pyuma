@@ -31,7 +31,7 @@ setup(
     classifiers = ["Development Status :: 4 - Beta",
         "License :: OSI Approved :: Apache Software License",
         "Topic :: Software Development :: Libraries :: Python Modules"],
-    install_requires = ['oic', 'pymongo'],
+    install_requires = ['oic', 'pymongo', 'bson'],
 
     zip_safe=False,
 )

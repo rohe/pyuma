@@ -1,0 +1,4 @@
+pymongo==2.5.1
+oic==0.7.1
+pyjwkest==0.6.1
+bson==0.3.3

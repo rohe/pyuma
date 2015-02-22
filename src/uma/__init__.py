@@ -1,7 +1,7 @@
 __author__ = 'rolandh'
 
-AAT = "http://docs.kantarainitiative.org/uma/scopes/authz.json"
-PAT = "http://docs.kantarainitiative.org/uma/scopes/prot.json"
+AAT = "uma_authorization"
+PAT = "uma_protection"
 
 
 class UMAError(Exception):
