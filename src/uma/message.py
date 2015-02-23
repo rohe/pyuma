@@ -79,10 +79,8 @@ class ResourceSetDescription(Message):
         "icon_uri": SINGLE_OPTIONAL_STRING,
         "scopes": REQUIRED_LIST_OF_STRINGS,
         "type": SINGLE_OPTIONAL_STRING,
-        #"member": OPTIONAL_MESSAGE,
         "_id": SINGLE_OPTIONAL_STRING,
         "_rev": SINGLE_OPTIONAL_STRING,
-        #"subsets": OPTIONAL_LIST_OF_STRINGS
     }
 
 

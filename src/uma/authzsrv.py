@@ -426,7 +426,7 @@ class UmaAS(object):
         try:
             body = func(**args)
         except MessageException as err:
-            _err = ErrorResponse(error="message_error",
+            _err = ErrorResponse(error="invalid_request",
                                  error_description=str(err))
             response = BadRequest(_err.to_json(), content="application/json")
         except UnknownObject:
