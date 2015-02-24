@@ -94,7 +94,7 @@ PLEN = len(RSR_PATH)
 
 def eval_scopes(permission, allow_scopes):
     _scopes = []
-    
+
     for scope in permission["scopes"]:
         if scope in allow_scopes:
             _scopes.append(scope)
@@ -353,9 +353,9 @@ class UmaAS(object):
             yield endp.etype
 
     # def rpt_endpoint_(self, requestor, client_id, **kwargs):
-    #     """
-    #     The endpoint URI at which the client asks the authorization server for
-    #     a RPT.
+    # """
+    # The endpoint URI at which the client asks the authorization server for
+    # a RPT.
     #     """
     #     #res = self.client_authentication(authn)
     #     #if isinstance(res, Response):
@@ -390,7 +390,7 @@ class UmaAS(object):
         # Path may or may not start with '/'
         if path.startswith("/"):
             assert path[1:].startswith(RSR_PATH)
-            rsid = path[PLEN+1:]
+            rsid = path[PLEN + 1:]
         else:
             assert path.startswith(RSR_PATH)
             rsid = path[PLEN:]
@@ -444,13 +444,15 @@ class UmaAS(object):
                     response = NoContent()
                 elif func == self.resource_set.create:
                     if body["status"] == "created":
+                        _etag = self.resource_set.etag[body["_id"]]
                         response = Created(body.to_json(),
                                            content="application/json",
-                                           headers=[("ETag", body["_rev"])])
+                                           headers=[("ETag", _etag)])
                 elif func == self.resource_set.update:
                     if body["status"] == "updated":
+                        _etag = self.resource_set.etag[body["_id"]]
                         response = NoContent(content="application/json",
-                                             headers=[("ETag", body["_rev"])])
+                                             headers=[("ETag", _etag)])
                 elif func == self.resource_set.list:
                     response = Response(json.dumps(body))
 
@@ -465,7 +467,7 @@ class UmaAS(object):
         for item in items:
             try:
                 for rsid in item["subsets"]:
-                    if not rsid in referenced:
+                    if rsid not in referenced:
                         referenced[rsid] = 1
                     else:
                         referenced[rsid] += 1
@@ -473,7 +475,7 @@ class UmaAS(object):
                 pass
 
             _rsid = self.map_id_rsid[item["_id"]]
-            if not _rsid in referenced:
+            if _rsid not in referenced:
                 referenced[_rsid] = 0
             ibrsid[_rsid] = item
 
@@ -553,7 +555,7 @@ class UmaAS(object):
                 expires_at=_info["expires_at"],
             )
             try:
-                #requestor = self.rpt[ir["token"]]["requestor"]
+                # requestor = self.rpt[ir["token"]]["requestor"]
                 perms = self.permit.get_accepted(entity, ir["token"])
             except KeyError:
                 pass
@@ -651,12 +653,12 @@ class UmaAS(object):
             _response = self.create_uma_providerinfo()
 
             headers = [("Cache-Control", "no-store"), ("x-ffo", "bar")]
-            #if handle:
-            #    (key, timestamp) = handle
-            #    if key.startswith(STR) and key.endswith(STR):
-            #        cookie = self.cookie_func(key, self.cookie_name, "pinfo",
-            #                                  self.sso_ttl)
-            #        headers.append(cookie)
+            # if handle:
+            #     (key, timestamp) = handle
+            #     if key.startswith(STR) and key.endswith(STR):
+            #         cookie = self.cookie_func(key, self.cookie_name, "pinfo",
+            #                                   self.sso_ttl)
+            #         headers.append(cookie)
 
             resp = Response(_response.to_json(), content="application/json",
                             headers=headers)
@@ -718,7 +720,7 @@ class UmaAS(object):
             self.permit.del_request(owner, adr["ticket"])
 
         # Verify that the scopes are defined for the resource set
-        #_mid = self.map_rsid_id[permission["resource_set_id"]]
+        # _mid = self.map_rsid_id[permission["resource_set_id"]]
         _user = safe_name(owner, client_id)
         rsd = self.resource_set.read(_user, permission["resource_set_id"])
         for scope in permission["scopes"]:
@@ -850,6 +852,7 @@ class UmaAS(object):
     def rsid_permits(self, user, requestor):
         return self.permit.get_rsid_permits(user, requestor)
 
+
 # ----------------------------------------------------------------------------
 
 
@@ -940,9 +943,9 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
                                                       **kwargs)
 
     # def authorization_data_request_endpoint(self, request="", authn="",
-    #                                         **kwargs):
-    #     try:
-    #         owner, client_id = client_authentication(self.sdb, authn)
+    # **kwargs):
+    # try:
+    # owner, client_id = client_authentication(self.sdb, authn)
     #     except AuthnFailed:
     #         return Unauthorized()
     #
@@ -994,7 +997,8 @@ class OidcDynRegUmaAS(UmaAS):
         self.srv["oidc"].baseurl = base
 
         self.request2endpoint = dict(
-            [(e.__class__.__name__, "%s_endpoint" % e.etype) for e in self.endp])
+            [(e.__class__.__name__, "%s_endpoint" % e.etype) for e in
+             self.endp])
 
     def user_from_bearer_token(self, authn=""):
         if not authn:
@@ -1020,11 +1024,11 @@ class OidcDynRegUmaAS(UmaAS):
         :param auth: authentication information
         """
         return authenticated_call(self.sdb, self.rpt_endpoint_, authn,
-                                       **kwargs)
+                                  **kwargs)
 
     def introspection_endpoint(self, request="", authn="", **kwargs):
         return authenticated_call(self.sdb, self.introspection_endpoint_,
-                                       authn, request, **kwargs)
+                                  authn, request, **kwargs)
 
     def uma_providerinfo_endpoint(self, handle="", **kwargs):
         return self.providerinfo_endpoint_(handle, **kwargs)
@@ -1051,14 +1055,13 @@ class OidcDynRegUmaAS(UmaAS):
             **kwargs)
 
     def authorization_endpoint(self, request="", **kwargs):
-        #return self.srv["oidc"].authorization_endpoint(request, **kwargs)
+        # return self.srv["oidc"].authorization_endpoint(request, **kwargs)
         return self.srv["oauth"].authorization_endpoint(request, **kwargs)
 
     def token_endpoint(self, request="", **kwargs):
-        #return self.srv["oidc"].token_endpoint(request, **kwargs)
+        # return self.srv["oidc"].token_endpoint(request, **kwargs)
         return self.srv["oauth"].token_endpoint(request=request, **kwargs)
 
     def client_info_endpoint(self, request, environ, method, query):
         _srv = self.srv["dyn_reg"]
         return _srv.client_info_endpoint(request, environ, method, query)
-

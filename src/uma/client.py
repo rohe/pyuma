@@ -2,10 +2,10 @@ import base64
 import logging
 
 from oic import oic
+from oic.exception import MissingSession
 
 from oic.oauth2 import rndstr
 from oic.oauth2.message import AuthorizationRequest
-from oic.oauth2.exception import MissingSession
 from oic.oauth2 import dynreg
 from oic.oic.message import ProviderConfigurationResponse
 from oic.utils.authn.authn_context import PASSWORD

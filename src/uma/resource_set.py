@@ -1,16 +1,16 @@
-#from bson.errors import InvalidId
-#from bson.objectid import ObjectId
-#import pymongo
+# from bson.errors import InvalidId
+# from bson.objectid import ObjectId
+# import pymongo
 import hashlib
+import json
 
-from uma.message import ResourceSetDescription, ErrorResponse
+from uma.message import ResourceSetResponse
 from uma.uuid import uuid4
 from uma.message import StatusResponse
 
 __author__ = 'rolandh'
 
-RSDkeys = [k for k in ResourceSetDescription.c_param.keys()
-           if not k.startswith("_")]
+RSR = [k for k in ResourceSetResponse.c_param.keys() if not k.startswith("_")]
 
 
 class UnknownObject(Exception):
@@ -41,24 +41,26 @@ class MemResourceSetDB(ResourceSetDB):
     def __init__(self, **kwargs):
         ResourceSetDB.__init__(self, **kwargs)
         self.db = {}
+        self.etag = {}
 
     def create(self, data, oid):
-        rset = ResourceSetDescription().deserialize(data, "json")
-        rset.verify()
+        rset = ResourceSetResponse().deserialize(data, "json")
         rset.weed()
 
-        # add a revision number
-        rset["_rev"] = str(uuid4())
         m = hashlib.md5(rset.to_json())
         rsid = m.hexdigest()
+        rset["_id"] = rsid
+        # Need to add _id before verifying
+        rset.verify()
 
         try:
             self.db[oid][rsid] = rset
         except KeyError:
             self.db[oid] = {rsid: rset}
 
-        status = StatusResponse(_id=rsid, _rev=rset["_rev"],
-                                status="created")
+        # add a revision number
+        self.etag[rsid] = str(uuid4())
+        status = StatusResponse(_id=rsid, status="created")
         return status
 
     def read(self, oid, rsid):
@@ -71,31 +73,24 @@ class MemResourceSetDB(ResourceSetDB):
 
     def update(self, data, oid, rsid, if_match):
         try:
-            rset = self.db[oid][rsid]
+            _ = self.db[oid][rsid]
         except KeyError:
             raise UnknownObject()
 
-        _new = ResourceSetDescription().deserialize(data, "json")
-        _new.weed()
+        _dat = json.loads(data)
+        _d = dict([(c, v) for c, v in _dat.items() if c in RSR and c != "_id"])
+
+        _new = ResourceSetResponse(**_d)
+        _new["_id"] = rsid
         _new.verify()
 
-        # remove keys I don't allow to be added/updated
-        for key in _new.keys():
-            if key not in RSDkeys:
-                del data[key]
-
         if _new:
-            if if_match != rset["_rev"]:
-                status = ErrorResponse(error="precondition_failed")
-            else:
-                _new["_rev"] = str(uuid4())
-                self.db[oid][rsid] = _new
-
-                status = StatusResponse(_id=rsid, _rev=_new["_rev"],
-                                        status="updated")
+            self.db[oid][rsid] = _new
+            # new revision
+            self.etag[rsid] = str(uuid4())
+            status = StatusResponse(_id=rsid, status="updated")
         else:
-            status = StatusResponse(_id=rsid, _rev=rset["_rev"],
-                                    status="updated")
+            status = StatusResponse(_id=rsid, status="updated")
 
         return status
 

@@ -79,16 +79,19 @@ class ResourceSetDescription(Message):
         "icon_uri": SINGLE_OPTIONAL_STRING,
         "scopes": REQUIRED_LIST_OF_STRINGS,
         "type": SINGLE_OPTIONAL_STRING,
-        "_id": SINGLE_OPTIONAL_STRING,
-        "_rev": SINGLE_OPTIONAL_STRING,
     }
+
+
+class ResourceSetResponse(ResourceSetDescription):
+    c_param = ResourceSetDescription.c_param.copy()
+    c_param.update({"_id": SINGLE_REQUIRED_STRING})
 
 
 class StatusResponse(Message):
     c_param = {
         "status": SINGLE_REQUIRED_STRING,
         "_id": SINGLE_REQUIRED_STRING,
-        "_rev": SINGLE_REQUIRED_STRING,
+        # "_rev": SINGLE_REQUIRED_STRING,
         "policy_uri": SINGLE_OPTIONAL_STRING
     }
 
@@ -217,7 +220,8 @@ MSG = {
     "AuthorizationDataRequest": AuthorizationDataRequest,
     "AuthorizationDataResponse": AuthorizationDataResponse,
     "RequestingPartyClaimsRequest": RequestingPartyClaimsRequest,
-    "RequestingPartyClaimsResponse": RequestingPartyClaimsResponse
+    "RequestingPartyClaimsResponse": RequestingPartyClaimsResponse,
+    "ResourceSetResponse": ResourceSetResponse
 }
 
 
