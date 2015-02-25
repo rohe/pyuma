@@ -697,25 +697,31 @@ class UmaAS(object):
 
         self.permit.set_accepted(owner, rpt, perm)
 
-    def rpt_endpoint_(self, owner, client_id, **kwargs):
+    def rpt_endpoint_(self, entity, client_id, **kwargs):
         """
         Registers an Authorization Description
 
-        :param request:
-        :param requestor:
+        :param entity: Who's on the other side
         :param client_id: The UMA client, in essence the IdP
         :return: A Response instance
         """
 
         adr = AuthorizationDataRequest().from_json(kwargs["request"])
         owner = self.permit.get_owner_of_request_target(adr["ticket"])
+        try:
+            assert owner == entity
+        except AssertionError:
+            errmsg = ErrorResponse(error="not_authorized",
+                                   error_description="Not your ticket")
+            return BadRequest(errmsg.to_json(), content="application/json")
 
         # Get request permission that the resource server has registered
         try:
             permission = AuthzDescription().from_json(
                 self.permit.get_request(owner, adr["ticket"]))
         except KeyError:
-            return BadRequest()
+            errmsg = ErrorResponse(error="invalid_ticket")
+            return BadRequest(errmsg.to_json(), content="application/json")
         else:
             self.permit.del_request(owner, adr["ticket"])
 
@@ -727,7 +733,9 @@ class UmaAS(object):
             try:
                 assert scope in rsd["scopes"]
             except AssertionError:
-                return BadRequest("Undefined scopes")
+                errmsg = ErrorResponse(error="not_authorized",
+                                       error_description="Undefined scopes")
+                return BadRequest(errmsg.to_json(), content="application/json")
 
         # Is there any permissions registered by the owner, if so verify
         # that it allows what is requested. Return what is allowed !
@@ -743,7 +751,9 @@ class UmaAS(object):
                 for rsid, scopes in permissions.items():
                     self.register_permission(owner, adr["rpt"], rsid, scopes)
             else:
-                return BadRequest("No permission given")
+                errmsg = ErrorResponse(error="not_authorized",
+                                       error_description="No permission given")
+                return BadRequest(errmsg.to_json(), content="application/json")
         else:
             _scopes = []
             for scope in permission["scopes"]:
@@ -903,18 +913,18 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
         :param auth: authentication information
         """
         try:
-            owner, client_id = client_authentication(self.sdb, authn)
+            entity, client_id = client_authentication(self.sdb, authn)
         except AuthnFailed:
             return Unauthorized()
 
-        return self.rpt_endpoint_(owner, client_id, **kwargs)
+        return self.rpt_endpoint_(entity, client_id, **kwargs)
 
     def introspection_endpoint(self, request="", **kwargs):
         try:
-            owner, client_id = client_authentication(self.sdb, kwargs["authn"])
+            entity, client_id = client_authentication(self.sdb, kwargs["authn"])
         except AuthnFailed:
             return Unauthorized()
-        return self.introspection_endpoint_(request, owner, **kwargs)
+        return self.introspection_endpoint_(request, entity, **kwargs)
 
     def providerinfo_endpoint(self, handle="", **kwargs):
         return self.providerinfo_endpoint_(handle, **kwargs)
@@ -922,11 +932,11 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
     def resource_set_registration_endpoint(self, path, method, body="",
                                            if_match="", **kwargs):
         try:
-            owner, client_id = client_authentication(self.sdb, kwargs["authn"])
+            entity, client_id = client_authentication(self.sdb, kwargs["authn"])
         except AuthnFailed:
             return Unauthorized()
         return self.resource_set_registration_endpoint_(path, method,
-                                                        body, owner, client_id,
+                                                        body, entity, client_id,
                                                         if_match, **kwargs)
 
     def dynamic_client_endpoint(self, request="", environ=None, **kwargs):
@@ -934,11 +944,11 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
 
     def permission_registration_endpoint(self, request="", authn="", **kwargs):
         try:
-            owner, client_id = client_authentication(self.sdb, authn)
+            entity, client_id = client_authentication(self.sdb, authn)
         except AuthnFailed:
             return Unauthorized()
 
-        return self.permission_registration_endpoint_(request, owner,
+        return self.permission_registration_endpoint_(request, entity,
                                                       client_id=client_id,
                                                       **kwargs)
 
