@@ -194,7 +194,7 @@ grant = authzsrv.sdb[sid]["code"]
 _uma_client.token[REQUESTOR] = {"AAT": authzsrv.sdb.upgrade_to_token(grant)}
 
 # Get a RPT from the AS using the AAT as authentication and the ticket just
-# received
+# received.
 
 authn = "Bearer %s" % _uma_client.token[REQUESTOR]["AAT"]["access_token"]
 request = AuthorizationDataRequest(ticket=ticket)
@@ -203,14 +203,10 @@ resp = authzsrv.rpt_endpoint(authn, request=request.to_json())
 rtr = RPTResponse().from_json(resp.message)
 _uma_client.token[REQUESTOR]["RPT"] = rtr["rpt"]
 
-# Client tries to grab some info using the RPT as authn information
-# => fails the Resource server registers authz request
-
-# Introspection reveals no permissions are bound to the RPT
-
-_rpt = _uma_client.token[REQUESTOR]["RPT"]
+# Introspection
 
 pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
+_rpt = _uma_client.token[REQUESTOR]["RPT"]
 ir = IntrospectionRequest(token=_rpt)
 
 request_args = {"access_token": pat}
@@ -228,6 +224,8 @@ assert "permissions" in iresp
 rsids = ressrv.dataset.filter_by_permission(iresp,
                                             'https://dirg.org.umu.se/uma/read')
 
+
+# Collect information
 res = {}
 for rsid in rsids:
     owner, lid = ressrv.rsid2rsd[rsid]
