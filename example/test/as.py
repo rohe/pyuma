@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import json
 import logging
-from urlparse import parse_qs
+from urllib.parse import parse_qs
 
 from cherrypy import wsgiserver
 from oic.utils.authn.authn_context import PASSWORD
@@ -38,12 +38,12 @@ def get_body(environ):
     length = int(environ["CONTENT_LENGTH"])
     try:
         body = environ["wsgi.input"].read(length)
-    except Exception, excp:
+    except Exception as excp:
         logger.exception("Exception while reading post: %s" % (excp,))
         raise
 
     # restore what I might have upset
-    from StringIO import StringIO
+    from io import StringIO
     environ['wsgi.input'] = StringIO(body)
 
     return body
@@ -484,7 +484,7 @@ def application(environ, start_response):
                     AUTHZSRV.map_rsid_id[query["resource"][0]])
             except UnknownObject:
                 resp = BadRequest("Unknown object")
-            except Exception, err:
+            except Exception as err:
                 raise
             else:
                 resp, argv = edit_permission_form(query["user"][0],
@@ -523,7 +523,7 @@ def application(environ, start_response):
                     try:
                         resp = ENDPOINT2CB[prepath](environ, session, query)
                         break
-                    except Exception, err:
+                    except Exception as err:
                         raise
 
     if isinstance(resp, Response):
@@ -566,10 +566,10 @@ ONTS = {
 
 
 def get_sp(item):
-    metad = MetaDataFile(ONTS.values(), item, item)
+    metad = MetaDataFile(list(ONTS.values()), item, item)
     metad.load()
     sps = []
-    for entid, item in metad.entity.items():
+    for entid, item in list(metad.entity.items()):
         if "spsso_descriptor" in item:
             for sp in item["spsso_descriptor"]:
                 _name = ""
@@ -615,7 +615,7 @@ if __name__ == '__main__':
             SERVER_CERT, SERVER_KEY, CA_BUNDLE)
 
     #logger.info("RP server starting listening on port:%s" % rp_conf.PORT)
-    print "AS started, listening on port:%s" % PORT
+    print("AS started, listening on port:%s" % PORT)
     try:
         SRV.start()
     except KeyboardInterrupt:

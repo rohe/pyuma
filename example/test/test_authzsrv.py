@@ -30,7 +30,7 @@ class DataSet(object):
 
 ressrv = ResourceServer1C(DataSet(), registration_info=reginfo)
 
-EPPN = "foo@example.com"
+EPPN = b"foo@example.com"
 
 # A RS client
 md = hashlib.md5()

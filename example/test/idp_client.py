@@ -35,7 +35,7 @@ def application(environ, start_response):
         try:
             owner = IDP_CLIENT.get_tokens(environ["QUERY_STRING"])
             resp = IDP_CLIENT.get_info(owner)
-        except Exception, err:
+        except Exception as err:
             raise
     else:
         resp = None
@@ -72,7 +72,7 @@ if __name__ == '__main__':
     #        SERVER_CERT, SERVER_KEY, CA_BUNDLE)
 
     #logger.info("RP server starting listening on port:%s" % rp_conf.PORT)
-    print "Client started, listening on port:%s" % PORT
+    print("Client started, listening on port:%s" % PORT)
     try:
         SRV.start()
     except KeyboardInterrupt:

@@ -1,8 +1,8 @@
 import socket
 import logging
 import traceback
-import urllib
-import urlparse
+import urllib.request, urllib.parse, urllib.error
+import urllib.parse
 import json
 
 from oic.oauth2 import provider
@@ -59,10 +59,10 @@ class Provider(provider.Provider):
 
     @staticmethod
     def _verify_url(url, urlset):
-        part = urlparse.urlparse(url)
+        part = urllib.parse.urlparse(url)
 
         for reg, qp in urlset:
-            _part = urlparse.urlparse(reg)
+            _part = urllib.parse.urlparse(reg)
             if part.scheme == _part.scheme and part.netloc == _part.netloc:
                 return True
 
@@ -75,23 +75,23 @@ class Provider(provider.Provider):
         _cinfo = self.cdb[client_id].copy()
         logger.debug("_cinfo: %s" % _cinfo)
 
-        for key, val in request.items():
+        for key, val in list(request.items()):
             if key not in ignore:
                 _cinfo[key] = val
 
         if "redirect_uris" in request:
             ruri = []
             for uri in request["redirect_uris"]:
-                if urlparse.urlparse(uri).fragment:
+                if urllib.parse.urlparse(uri).fragment:
                     err = ClientRegistrationErrorResponse(
                         error="invalid_configuration_parameter",
                         error_description="redirect_uri contains fragment")
                     return Response(err.to_json(),
                                     content="application/json",
                                     status="400 Bad Request")
-                base, query = urllib.splitquery(uri)
+                base, query = urllib.parse.splitquery(uri)
                 if query:
-                    ruri.append((base, urlparse.parse_qs(query)))
+                    ruri.append((base, urllib.parse.parse_qs(query)))
                 else:
                     ruri.append((base, query))
             _cinfo["redirect_uris"] = ruri
@@ -100,7 +100,7 @@ class Provider(provider.Provider):
             si_url = request["sector_identifier_uri"]
             try:
                 res = self.server.http_request(si_url)
-            except ConnectionError, err:
+            except ConnectionError as err:
                 logger.error("%s" % err)
                 return self._error_response(
                     "invalid_configuration_parameter",
@@ -138,7 +138,7 @@ class Provider(provider.Provider):
                 # check that the hostnames are the same
                 host = ""
                 for url in request["redirect_uris"]:
-                    part = urlparse.urlparse(url)
+                    part = urllib.parse.urlparse(url)
                     _host = part.netloc.split(":")[0]
                     if not host:
                         host = _host
@@ -168,7 +168,7 @@ class Provider(provider.Provider):
                     ",".join(["%s" % x for x in self.keyjar[client_id]])))
             except KeyError:
                 pass
-        except Exception, err:
+        except Exception as err:
             logger.error("Failed to load client keys: %s" % request.to_dict())
             err = ClientRegistrationErrorResponse(
                 error="invalid_configuration_parameter",
@@ -202,11 +202,11 @@ class Provider(provider.Provider):
         request = RegistrationRequest().deserialize(request, "json")
 
         _log_info("registration_request:%s" % request.to_dict())
-        resp_keys = request.keys()
+        resp_keys = list(request.keys())
 
         try:
             request.verify()
-        except MessageException, err:
+        except MessageException as err:
             if "type" not in request:
                 return self._error(error="invalid_type",
                                    descr="%s" % err)
@@ -246,7 +246,7 @@ class Provider(provider.Provider):
         if isinstance(_cinfo, Response):
             return _cinfo
 
-        args = dict([(k, v) for k, v in _cinfo.items()
+        args = dict([(k, v) for k, v in list(_cinfo.items())
                      if k in RegistrationResponse.c_param])
 
         self.comb_redirect_uris(args)
@@ -298,11 +298,11 @@ class Provider(provider.Provider):
         client_id = self.cdb[token]
 
         # extra check
-        _info = urlparse.parse_qs(request)
+        _info = urllib.parse.parse_qs(request)
         assert _info["client_id"][0] == client_id
 
         logger.debug("Client '%s' reads client info" % client_id)
-        args = dict([(k, v) for k, v in self.cdb[client_id].items()
+        args = dict([(k, v) for k, v in list(self.cdb[client_id].items())
                      if k in RegistrationResponse.c_param])
 
         self.comb_redirect_uris(args)
@@ -336,7 +336,7 @@ class Provider(provider.Provider):
 
             resp = Response(_response.to_json(), content="application/json",
                             headers=headers)
-        except Exception, err:
+        except Exception as err:
             message = traceback.format_exception(*sys.exc_info())
             logger.error(message)
             resp = Response(message, content="html/text")

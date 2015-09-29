@@ -27,7 +27,7 @@ RS_HOST = "https://localhost:%s" % RS_PORT
 RS_CookieHandler = CookieDealer(None)
 ressrv = uma_rs.main(RS_HOST, RS_CookieHandler)
 
-print "go!"
+print("go!")
 
 
 def introspect(_client, rsrv, asrv):

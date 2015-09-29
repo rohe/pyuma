@@ -1,13 +1,9 @@
 import logging
-import urllib
+import urllib.request, urllib.parse, urllib.error
 
 from oic.oic import AuthorizationResponse
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.http_util import Response
-from oic.utils.http_util import Redirect
-from oic.utils.http_util import R2C
-
-from saml2.userinfo import UserInfo as SAMLUserInfo
 
 from uma import UMAError
 from uma.client import Client
@@ -19,12 +15,21 @@ __author__ = 'rolandh'
 logger = logging.getLogger(__name__)
 
 
+class UserInfo(object):
+    """ Read only interface to a user info store """
+
+    def __init__(self):
+        pass
+
+    def __call__(self, **kwargs):
+        pass
+
 # the API to the UMA protected IDP system that the IdP uses
 
-class UMAUserInfo(SAMLUserInfo):
+class UMAUserInfo(UserInfo):
     def __init__(self, client_name, redirect_uris, resource_srv, acr,
                  verify_ssl=True):
-        SAMLUserInfo.__init__(self)
+        UserInfo.__init__(self)
 
         # The UMA Client
         reginfo = {
@@ -34,7 +39,7 @@ class UMAUserInfo(SAMLUserInfo):
         }
 
         self.client = Client(
-            {}, client_authn_method=CLIENT_AUTHN_METHOD,
+            {}, client_authn_methods=CLIENT_AUTHN_METHOD,
             registration_info=reginfo, verify_ssl=verify_ssl)
 
         self.client.redirect_uris = redirect_uris
@@ -63,7 +68,7 @@ class UMAUserInfo(SAMLUserInfo):
         except KeyError:
             rpt = None
 
-        url = create_query(self.resource_srv, urllib.quote(user), attr)
+        url = create_query(self.resource_srv, urllib.parse.quote(user), attr)
 
         if rpt:
             kwargs = {"headers": {"Authorization": "Bearer %s" % rpt}}

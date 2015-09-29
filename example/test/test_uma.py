@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import base64
 import socket
-import urllib
+import urllib.request, urllib.parse, urllib.error
 from oic.oauth2 import Message
 from oic.oic import AuthorizationRequest
 from oic.oic import AuthorizationResponse
@@ -151,7 +151,7 @@ ressrv.set_client(authzsrv.baseurl, rs_client)
 pcr = ProviderConfiguration().from_json(
     authzsrv.providerinfo_endpoint().message)
 rs_client.provider_info[pcr["issuer"]] = pcr
-for key, val in pcr.items():
+for key, val in list(pcr.items()):
     if key.endswith("_endpoint"):
         setattr(rs_client, key, val)
 
@@ -252,7 +252,7 @@ reginfo = {
 idp_client.redirect_uris = reginfo["redirect_uris"]
 
 idp_client.provider_info[pcr["issuer"]] = pcr
-for key, val in pcr.items():
+for key, val in list(pcr.items()):
     if key.endswith("_endpoint"):
         setattr(idp_client, key, val)
 
@@ -281,7 +281,7 @@ REQUESTOR_SP = "https://sp.example.org/"
 # Use HTTP basic authn, fake SP username+passwd, should use symmetric key
 # to prove client identification
 
-auth_info = base64.b64encode("%s:%s" % (urllib.quote(REQUESTOR_SP), "code"))
+auth_info = base64.b64encode("%s:%s" % (urllib.parse.quote(REQUESTOR_SP), "code"))
 
 url, body, ht_args, csi = idp_client.request_info(
     AuthorizationRequest, "GET", request_args,

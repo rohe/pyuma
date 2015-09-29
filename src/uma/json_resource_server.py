@@ -1,5 +1,5 @@
 import json
-from urlparse import parse_qs
+from urllib.parse import parse_qs
 from oic.oauth2.message import ErrorResponse
 from oic.utils.http_util import Response
 from oic.utils.http_util import NoContent
@@ -141,7 +141,7 @@ class JsonResourceServer(UMAInformationProvider):
                 else:
                     _j = json.loads(data)
                     match = True
-                    for key, vals in _filt.items():
+                    for key, vals in list(_filt.items()):
                         if not match:
                             break
                         for val in vals:
@@ -261,7 +261,7 @@ class JsonResourceServer(UMAInformationProvider):
 
         try:
             f = open(_name, "w")
-        except IOError, err:
+        except IOError as err:
             head, tail = os.path.split(_name)
             # try to create
             os.mkdir(head)

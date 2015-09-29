@@ -4,6 +4,7 @@ import socket
 import traceback
 import sys
 import time
+from urllib.parse import urljoin
 
 from oic.oauth2.dynreg import Provider as OAUTH2Provider
 from oic.oic.provider import Provider as OIDCProvider
@@ -17,7 +18,8 @@ from oic.oauth2 import dynreg
 from oic.oauth2.provider import Endpoint
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.authn.user import ToOld
-from oic.utils.http_util import BadRequest, NoContent
+from oic.utils.http_util import BadRequest
+from oic.utils.http_util import NoContent
 from oic.utils.http_util import Created
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import Response
@@ -25,15 +27,20 @@ from oic.utils.keyio import KeyJar
 # from uma.authzdb import AuthzDB
 
 from uma.client import UMA_SCOPE
-from uma.message import IntrospectionRequest, ErrorResponse
+from uma.message import IntrospectionRequest, AuthorizationDataResponse
+from uma.message import ErrorResponse
 from uma.message import AuthzDescription
 from uma.message import AuthorizationDataRequest
 from uma.message import IntrospectionResponse
 from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
 # from uma.resource_set import ResourceSetDB
-from uma.resource_set import MemResourceSetDB, UnknownObject
+from uma.resource_set import MemResourceSetDB
+from uma.resource_set import UnknownObject
+from uma.permission import Permission
 
+from oic.utils.time_util import utc_time_sans_frac
+from oic.oauth2.provider import endpoint_ava
 __author__ = 'rolandh'
 
 logger = logging.getLogger(__name__)
@@ -62,33 +69,39 @@ class UnknownResourceSet(Exception):
 
 class ResourceSetRegistrationEndpoint(Endpoint):
     etype = "resource_set_registration"
-
+    url = "resource_set_registration"
 
 class IntrospectionEndpoint(Endpoint):
     etype = "introspection"
+    url = "introspection"
 
 
 class PermissionRegistrationEndpoint(Endpoint):
     etype = "permission_registration"
+    url = "permission_registration"
 
 
 class RPTEndpoint(Endpoint):
     etype = "rpt"
+    url = "rpt"
 
 
 class DynamicClientEndpoint(Endpoint):
     etype = "dynamic_client"
+    url = "dynamic_client"
 
 
 class RequestingPartyClaimsEndpoint(Endpoint):
     etype = "requesting_party_claims"
+    url = "requesting_party_claims"
 
 
 class ClientInfoEndpoint(Endpoint):
     etype = "clientinfo"
+    url = "clientinfo"
 
 
-RSR_PATH = "%s/resource_set" % ResourceSetRegistrationEndpoint(None).etype
+RSR_PATH = "%s/resource_set" % ResourceSetRegistrationEndpoint().etype
 PLEN = len(RSR_PATH)
 
 
@@ -127,8 +140,9 @@ def client_authentication(sdb, authn=""):
 
         token = authn[7:]
         try:
-            subject = sdb.read(token)["sub"]
-            client_id = sdb.read(token)["client_id"]
+            _info = sdb.read(token)
+            subject = _info["authn_event"].uid
+            client_id = _info["client_id"]
         except KeyError:
             raise AuthnFailed()
 
@@ -143,7 +157,7 @@ class Session(object):
 
     def get(self, item):
         _info = self.db[item]
-        now = time.time()
+        now = utc_time_sans_frac()
         if _info["expires_at"] < now:
             raise ToOld("Already expired")
 
@@ -159,7 +173,7 @@ class Session(object):
         return _info
 
     def set(self, token, permissions=""):
-        now = time.time()
+        now = utc_time_sans_frac()
 
         _info = {
             "expires_at": now + self.lifetime,
@@ -180,132 +194,6 @@ class Session(object):
         self.db[token].update(kwargs)
 
 
-class Permission(object):
-    def __init__(self):
-        self.db = {}
-
-    def init_owner(self, owner):
-        self.db[owner] = {
-            "request": {},
-            "permit": {},
-            "accepted": {},
-            "permitted_at": {}
-        }
-
-    def add_request(self, owner, ticket, req):
-        if owner not in self.db:
-            self.init_owner(owner)
-
-        self.db[owner]["request"][ticket] = req
-
-    def get_request(self, owner, ticket):
-        return self.db[owner]["request"][ticket]
-
-    def get_outstanding_requests(self, owner):
-        """
-        :param owner:
-        :return: A dictionary of tickets and requests
-        """
-        return self.db[owner]["request"]
-
-    def del_request(self, owner, ticket):
-        """
-        Remove a specific permission request
-        :param owner: The owner of the resource
-        :param ticket: The ticket returned when the request was registered
-        """
-        del self.db[owner]["request"][ticket]
-
-    def set_permit(self, owner, requestor, resource_id, scopes=None):
-        if owner not in self.db:
-            self.init_owner(owner)
-
-        _perm = self.db[owner]["permit"]
-
-        _val = (scopes, time.time())
-        try:
-            _perm[requestor][resource_id] = _val
-        except KeyError:
-            try:
-                _perm[requestor] = {resource_id: _val}
-            except KeyError:
-                self.db[owner]["permit"] = {requestor: {resource_id: _val}}
-
-    def get_permit(self, owner, requestor, resource_id):
-        """
-        :return: A tuple (scopes, timestamp)
-        """
-        return self.db[owner]["permit"][requestor][resource_id]
-
-    def get_permit_by_requestor(self, owner, requestor):
-        """
-        :return: A dictionary with resource_id as keys and the tuple
-        (scopes, timestamp) as values
-        """
-        return self.db[owner]["permit"][requestor]
-
-    def delete_permit(self, owner, requestor, resource_id):
-        try:
-            del self.db[owner]["permit"][requestor][resource_id]
-        except KeyError:
-            pass
-
-    def delete_permit_by_resource_id(self, owner, resource_id):
-        try:
-            _perm = self.db[owner]["permit"]
-        except KeyError:
-            pass
-        else:
-            for req, spec in _perm.items():
-                if resource_id in spec:
-                    self.delete_permit(owner, req, resource_id)
-
-    def get_permits(self, owner):
-        """
-        :param owner: The owner of the resource
-        :return: A dictionary with requestors as keys and permissions as keys
-        """
-        return self.db[owner]["permit"]
-
-    def set_accepted(self, owner, rpt, authz_desc):
-        if owner not in self.db:
-            self.init_owner(owner)
-
-        try:
-            self.db[owner]["accepted"][rpt].append(authz_desc)
-        except KeyError:
-            self.db[owner]["accepted"] = {rpt: [authz_desc]}
-
-    def get_accepted(self, owner, rpt):
-        return self.db[owner]["accepted"][rpt]
-
-    def rm_accepted(self, owner, rsid):
-        _remove = []
-        for rpt, desc in self.db[owner]["accepted"].items():
-            if desc["resource_set_id"] == rsid:
-                _remove.append(rpt)
-
-        for rpt in _remove:
-            del self.db[owner]["accepted"][rpt]
-
-        return _remove
-
-    def get_owner_of_request_target(self, requestid):
-        for owner, item in self.db.items():
-            for key, req in item["request"].items():
-                if key == requestid:
-                    return owner
-
-    def get_rsid_permits(self, owner, requestor):
-        """
-        :return: list of resource set ids
-        """
-        try:
-            return self.db[owner]["permit"][requestor].keys()
-        except KeyError:
-            return []
-
-
 def get_requester(foo):
     return foo
 
@@ -318,7 +206,8 @@ def authenticated_call(sdb, func, authn, request=None, **kwargs):
     else:
         kwargs["entity"] = entity
         kwargs["client_id"] = client_id
-        kwargs["request"] = request
+        if request:
+            kwargs["request"] = request
     return func(**kwargs)
 
 
@@ -370,16 +259,16 @@ class UmaAS(object):
     #     return Response(msg.to_json(), content="application/json")
 
     def resource_set_registration_endpoint_(self, entity, path, method, body,
-                                            client_id, if_match,
+                                            client_id, if_match="",
                                             **kwargs):
         """
         The endpoint at which the resource server handles resource sets
         descriptions.
 
+        :param entity: The entity that controls the resource set
         :param path:
         :param method: HTTP method
         :param body: The resource set registration message
-        :param owner: The Owner of the resource
         :paran client_id: Which client I'm talking to
         :param if_match: The HTTP If-Match header if any
         :param kwargs: possible other arguments
@@ -405,8 +294,10 @@ class UmaAS(object):
             args = {"oid": _user, "data": body}
             func = self.resource_set.create
         elif method == "PUT":  # update
-            args = {"oid": _user, "data": body, "rsid": rsid,
-                    "if_match": if_match}
+            args = {
+                "oid": _user, "data": body, "rsid": rsid,
+                # "if_match": if_match
+            }
             func = self.resource_set.update
         elif method == "GET":
             args = {"oid": _user}
@@ -480,29 +371,35 @@ class UmaAS(object):
             ibrsid[_rsid] = item
 
         res = []
-        for key, val in referenced.items():
+        for key, val in list(referenced.items()):
             if val == 0:
                 res.append(ibrsid[key])
 
         return res
 
-    # def resource_sets_by_user(self, user, collapse=False):
-    #     """
-    #     :param user: The user for which resource set descriptions has been
-    #         registered.
-    #     :return: A list of ResourceSetDescriptions
-    #     """
-    #     res = []
-    #     for _id in self.map_user_id[user]:
-    #         try:
-    #             res.append(self.resource_set.read(_id))
-    #         except Exception:
-    #             raise
-    #
-    #     if collapse:
-    #         res = self._collapse(res)
-    #
-    #     return res
+    def resource_sets_by_user(self, entity, client_id, collapse=False):
+        """
+        :param entity: The entity for which resource set descriptions has been
+            registered.
+        :return: A list of ResourceSetDescriptions
+        """
+        res = []
+        _user = safe_name(entity, client_id)
+        try:
+            rss = self.resource_set.list(_user)
+        except KeyError:
+            return []
+
+        for _id in rss:
+            try:
+                res.append(self.resource_set.read(_user, _id))
+            except Exception:
+                raise
+
+        if collapse:
+            res = self._collapse(res)
+
+        return res
 
     # def resource_set_tree_by_rsid(self, owner, rsid):
     #     rs = self.resource_set.read(owner, rsid)
@@ -548,25 +445,26 @@ class UmaAS(object):
         request = kwargs["request"]
         logger.debug("requestor: %s, request: %s" % (entity, request))
         ir = IntrospectionRequest().from_json(request)
+        owner = safe_name(entity, kwargs["client_id"])
         try:
-            _info = self.session.get(ir["token"])
-            irep = IntrospectionResponse(
-                valid=True,
-                expires_at=_info["expires_at"],
-            )
             try:
                 # requestor = self.rpt[ir["token"]]["requestor"]
-                perms = self.permit.get_accepted(entity, ir["token"])
+                perms = self.permit.get_accepted(owner, ir["token"])
             except KeyError:
-                pass
+                response = BadRequest()
             else:
                 if perms:
-                    irep["permissions"] = perms
+                    irep = IntrospectionResponse(
+                        active=True,
+                        exp=perms[0]["exp"],
+                        permissions= perms
+                    )
+                    logger.debug("response: %s" % irep.to_json())
+                    response = Response(irep.to_json(),
+                                        content="application/json")
                 else:
                     logger.info("No permissions bound to this RPT")
-
-            logger.debug("response: %s" % irep.to_json())
-            response = Response(irep.to_json(), content="application/json")
+                    response = BadRequest()
         except ToOld:
             logger.info("RPT expired")
             irep = IntrospectionResponse(valid=False)
@@ -586,7 +484,7 @@ class UmaAS(object):
         _ticket = rndstr(24)
         logging.debug("Registering permission request: %s" % request)
         resp = PermissionRegistrationResponse(ticket=_ticket)
-        self.permit.add_request(entity, _ticket, request)
+        self.permit.add_request(_ticket, request)
 
         return Created(resp.to_json(), content="application/json")
 
@@ -626,7 +524,7 @@ class UmaAS(object):
             return Response(err.to_json(), content="application/json")
 
         try:
-            assert areq["scope"] in UMA_SCOPE.values()
+            assert areq["scope"] in list(UMA_SCOPE.values())
         except AssertionError:
             logger.error("Asked for scope which I don't deal with")
             err = TokenErrorResponse(error="invalid_scope")
@@ -635,13 +533,12 @@ class UmaAS(object):
         return None
 
     def create_uma_providerinfo(self, pcr_class=ProviderConfiguration):
-        kwargs = dict([(k, v) for k, v in self.conf_info.items()
+        kwargs = dict([(k, v) for k, v in list(self.conf_info.items())
                        if k in pcr_class.c_param])
         _response = pcr_class(**kwargs)
 
         for endp in UmaAS.endp:
-            _e = endp(None)
-            _response[_e.name] = "%s%s" % (self.baseurl, _e.etype)
+            _response.update(endpoint_ava(endp, self.baseurl))
 
         logger.debug("provider_info_response: %s" % (_response.to_dict(),))
         return _response
@@ -662,7 +559,7 @@ class UmaAS(object):
 
             resp = Response(_response.to_json(), content="application/json",
                             headers=headers)
-        except Exception, err:
+        except Exception as err:
             message = traceback.format_exception(*sys.exc_info())
             logger.error(message)
             resp = Response(message, content="html/text")
@@ -676,7 +573,7 @@ class UmaAS(object):
         except KeyError:
             return res
 
-        for permit, (_scopes, time_stamp) in permits.items():
+        for permit, (_scopes, time_stamp) in list(permits.items()):
             _scs = []
             for scope in scopes:
                 try:
@@ -690,10 +587,10 @@ class UmaAS(object):
         return res
 
     def register_permission(self, owner, rpt, rsid, scopes):
-        now = time.time()
+        now = utc_time_sans_frac()
         perm = AuthzDescription(resource_set_id=rsid, scopes=scopes,
-                                expires_at=now + self.session.lifetime,
-                                issued_at=now)
+                                exp=now + self.session.lifetime,
+                                iat=now)
 
         self.permit.set_accepted(owner, rpt, perm)
 
@@ -702,33 +599,25 @@ class UmaAS(object):
         Registers an Authorization Description
 
         :param entity: Who's on the other side
-        :param client_id: The UMA client, in essence the IdP
+        :param client_id: The UMA client
         :return: A Response instance
         """
 
         adr = AuthorizationDataRequest().from_json(kwargs["request"])
-        owner = self.permit.get_owner_of_request_target(adr["ticket"])
-        try:
-            assert owner == entity
-        except AssertionError:
-            errmsg = ErrorResponse(error="not_authorized",
-                                   error_description="Not your ticket")
-            return BadRequest(errmsg.to_json(), content="application/json")
 
         # Get request permission that the resource server has registered
         try:
-            permission = AuthzDescription().from_json(
-                self.permit.get_request(owner, adr["ticket"]))
+            permission = self.permit.get_request(adr["ticket"])
         except KeyError:
             errmsg = ErrorResponse(error="invalid_ticket")
             return BadRequest(errmsg.to_json(), content="application/json")
         else:
-            self.permit.del_request(owner, adr["ticket"])
+            self.permit.del_request(adr["ticket"])
+            _rsid = permission["resource_set_id"]
 
         # Verify that the scopes are defined for the resource set
-        # _mid = self.map_rsid_id[permission["resource_set_id"]]
-        _user = safe_name(owner, client_id)
-        rsd = self.resource_set.read(_user, permission["resource_set_id"])
+        owner = self.resource_set.rsid2oid[_rsid]
+        rsd = self.resource_set.read(owner, _rsid)
         for scope in permission["scopes"]:
             try:
                 assert scope in rsd["scopes"]
@@ -739,21 +628,19 @@ class UmaAS(object):
 
         # Is there any permissions registered by the owner, if so verify
         # that it allows what is requested. Return what is allowed !
-        _requester = self.get_requester(owner)
 
         try:
-            allow_scopes, timestamp = self.permit.get_permit(
-                owner, _requester, permission["resource_set_id"])
+            _rpt = adr["rpt"]
+        except KeyError:
+            _rpt = rndstr(32)
+
+        try:
+            allow_scopes, timestamp = self.permit.get_permit(owner, entity,
+                                                             _rsid)
         except KeyError:  #
-            if "subsets" in rsd:  # complex resource set
-                permissions = self.get_subsets(owner, _requester,
-                                               permission["scopes"])
-                for rsid, scopes in permissions.items():
-                    self.register_permission(owner, adr["rpt"], rsid, scopes)
-            else:
-                errmsg = ErrorResponse(error="not_authorized",
-                                       error_description="No permission given")
-                return BadRequest(errmsg.to_json(), content="application/json")
+            errmsg = ErrorResponse(error="not_authorized",
+                                   error_description="No permission given")
+            return BadRequest(errmsg.to_json(), content="application/json")
         else:
             _scopes = []
             for scope in permission["scopes"]:
@@ -766,13 +653,15 @@ class UmaAS(object):
 
             # bind _requester to specific RPT for this user
             try:
-                self.eid2rpt[owner][_requester] = adr["rpt"]
+                self.eid2rpt[owner][entity] = _rpt
             except KeyError:
-                self.eid2rpt[owner] = {_requester: adr["rpt"]}
+                self.eid2rpt[owner] = {entity: _rpt}
 
-            self.register_permission(owner, adr["rpt"],
-                                     permission["resource_set_id"], _scopes)
-        return Created("")
+            self.register_permission(owner, _rpt, _rsid, _scopes)
+
+        rsp = AuthorizationDataResponse(rpt=_rpt)
+
+        return Response(rsp.to_json())
 
     def name2id(self, owner, requestor, rsid):
         _user = safe_name(owner, requestor)
@@ -813,7 +702,7 @@ class UmaAS(object):
         logger.info("store: (%s, %s, %s)" % (user, requestor, rsids))
 
         present = self.permit.get_rsid_permits(user, requestor)
-        _new = [k for k in rsids.keys() if k not in present]
+        _new = [k for k in list(rsids.keys()) if k not in present]
         _user = safe_name(user, requestor)
         for rsid in _new:
             scopes = rsids[rsid]
@@ -1009,6 +898,8 @@ class OidcDynRegUmaAS(UmaAS):
         self.request2endpoint = dict(
             [(e.__class__.__name__, "%s_endpoint" % e.etype) for e in
              self.endp])
+
+        self.kid = {"sig": {}, "enc": {}}
 
     def user_from_bearer_token(self, authn=""):
         if not authn:

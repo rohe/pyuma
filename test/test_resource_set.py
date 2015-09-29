@@ -1,6 +1,6 @@
 from uma.message import ResourceSetDescription
-from uma.resource_set import ResourceSetDB
 from uma.resource_set import UnknownObject
+from uma.resource_set import MemResourceSetDB
 
 __author__ = 'rolandh'
 
@@ -13,7 +13,7 @@ def _eq(l1, l2):
 
 
 def test_create():
-    rset = ResourceSetDB(DB_NAME, COLLECTION)
+    rset = MemResourceSetDB(dbname=DB_NAME, collection=COLLECTION)
 
     rsd = ResourceSetDescription(
         name="Photo Album",
@@ -23,13 +23,13 @@ def test_create():
             "http://photoz.example.com/dev/scopes/all"],
         type="http://www.example.com/rsets/photoalbum")
 
-    status = rset.create(rsd.to_json())
+    status = rset.create(rsd.to_json(), "oid")
 
     assert status
     assert status["status"] == "created"
-    assert _eq(status.keys(), ["status", "_id", "_rev"])
+    assert _eq(list(status.keys()), ["status", "_id"])
 
-    item = rset.read(status["_id"])
+    item = rset.read("oid", status["_id"])
 
     assert item
     assert isinstance(item, ResourceSetDescription)
@@ -38,14 +38,14 @@ def test_create():
     assert item["type"] == rsd["type"]
 
     try:
-        rset.read("phoney")
+        rset.read("phoney", "id")
         assert False
     except UnknownObject:
         pass
 
 
 def test_update():
-    rset = ResourceSetDB(DB_NAME, COLLECTION)
+    rset = MemResourceSetDB(dbname=DB_NAME, collection=COLLECTION)
 
     rsd = ResourceSetDescription(
         name="Identity",
@@ -56,19 +56,17 @@ def test_update():
             "http://xenosmilus2.umdc.umu.se/uma/read/all"
         ])
 
-    status = rset.create(rsd.to_json())
+    status = rset.create(rsd.to_json(), "oid")
     assert status["status"] == "created"
 
-    before = rset.read(status["_id"])
+    #before = rset.read(status["_id"], 'oid')
 
     rsd["scopes"].append("http://xenosmilus2.umdc.umu.se/uma/read/contact")
 
-    status2 = rset.update(rsd.to_json(), status["_id"])
+    status2 = rset.update(rsd.to_json(), "oid", status["_id"], )
     assert status2["status"] == "updated"
 
-    after = rset.read(status["_id"])
-
-    assert before["_rev"] != after["_rev"]
+    after = rset.read("oid", status["_id"])
 
     assert len(after["scopes"]) == 5
 

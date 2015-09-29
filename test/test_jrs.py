@@ -1,7 +1,8 @@
-from StringIO import StringIO
+from io import StringIO
 import json
 from oic.utils.http_util import Response
-from uma.message import IntrospectionResponse, AuthzDescription
+from uma.message import IntrospectionResponse
+from uma.message import AuthzDescription
 from uma.json_resource_server import JsonResourceServer
 from uma.json_resource_server import DEF_SCOPES
 from oic.oauth2.message import ErrorResponse
@@ -49,7 +50,8 @@ def test_roger_read():
     resp = jrs.do("info/alice/1", environ, permission=ir)
 
     assert not isinstance(resp, ErrorResponse)
-    assert resp.message == '{"foo": "bar", "_id": 1}'
+    assert resp.message in ['{"foo": "bar", "_id": 1}',
+                            '{"_id": 1, "foo": "bar"}']
 
 
 def test_roger_create():
@@ -147,5 +149,6 @@ def test_get_owner():
 
 
 
-test_alice_add()
-test_roger_patch()
+if __name__ == "__main__":
+    test_alice_add()
+    test_roger_patch()

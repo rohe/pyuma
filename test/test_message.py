@@ -16,7 +16,7 @@ def test_scope():
 
     _scope = Scope().deserialize(msg, "json")
 
-    assert _scope.keys() == ["name", "icon_uri"]
+    assert _eq(list(_scope.keys()), ["name", "icon_uri"])
 
 
 def test_resource_set_description():
@@ -32,7 +32,7 @@ def test_resource_set_description():
 
     rsc_set = ResourceSetDescription().deserialize(msg, "json")
 
-    assert _eq(rsc_set.keys(), ["name", "icon_uri", "scopes", "type"])
+    assert _eq(list(rsc_set.keys()), ["name", "icon_uri", "scopes", "type"])
     assert rsc_set["name"] == "Photo Album"
     assert rsc_set["icon_uri"] == "http://www.example.com/icons/flower.png"
     assert _eq(rsc_set["scopes"], ["http://photoz.example.com/dev/scopes/view",
@@ -58,7 +58,7 @@ def test_introspection_response():
       }"""
 
     ir = IntrospectionResponse().from_json(msg)
-    print ir
+    print(ir)
     assert ir["valid"] is True
     assert ir["expires_at"] == 1256953732
 
@@ -67,7 +67,7 @@ def test_introspection_response():
     assert perm[0]["resource_set_id"] == "112210f47de98100"
 
     resp = ir.to_json()
-    print resp
+    print(resp)
     assert resp
 
     ir2 = IntrospectionResponse(**ir.to_dict())

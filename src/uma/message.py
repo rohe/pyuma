@@ -57,7 +57,7 @@ class Scope(Message):
 
 def msg_list_deser(val, sformat="urlencoded"):
     if sformat in ["dict", "json"]:
-        if not isinstance(val, basestring):
+        if not isinstance(val, str):
             res = []
             if sformat == "dict":
                 for _val in val:
@@ -99,10 +99,10 @@ class StatusResponse(Message):
 class AuthzDescription(Message):
     c_param = {
         "resource_set_id": SINGLE_REQUIRED_STRING,
-        "entity": SINGLE_OPTIONAL_STRING,
         "scopes": REQUIRED_LIST_OF_STRINGS,
-        "expires_at": SINGLE_REQUIRED_INT,
-        "issued_at": SINGLE_OPTIONAL_INT,
+        "exp": SINGLE_REQUIRED_INT,
+        "iat": SINGLE_OPTIONAL_INT,
+        'nbf': SINGLE_OPTIONAL_INT
     }
 
 
@@ -116,7 +116,7 @@ class IntrospectionRequest(Message):
 
 def adesc_deser(val, sformat="urlencoded"):
     if sformat in ["dict", "json"]:
-        if not isinstance(val, basestring):
+        if not isinstance(val, str):
             res = []
             if sformat == "dict":
                 for _val in val:
@@ -141,6 +141,15 @@ def adesc_ser(inst, sformat, lev=0):
             res = inst.serialize(sformat, lev)
         elif isinstance(inst, dict):
             res = inst
+        elif isinstance(inst, list):
+            res = []
+            for item in inst:
+                if isinstance(item, AuthzDescription):
+                    res.append(item.serialize(sformat, lev))
+                elif isinstance(item, dict):
+                    res.append(item)
+                else:
+                    raise ValueError("%s" % type(item))
         else:
             raise ValueError("%s" % type(inst))
     else:
@@ -153,9 +162,9 @@ OPTIONAL_PERM_LIST = ([AuthzDescription], False, adesc_ser, adesc_deser, False)
 
 class IntrospectionResponse(Message):
     c_param = {
-        "valid": SINGLE_OPTIONAL_BOOLEAN,
-        "expires_at": SINGLE_OPTIONAL_INT,
-        "issued_at": SINGLE_OPTIONAL_INT,
+        "active": SINGLE_OPTIONAL_BOOLEAN,
+        "exp": SINGLE_OPTIONAL_INT,
+        "iat": SINGLE_OPTIONAL_INT,
         "permissions": OPTIONAL_PERM_LIST,
     }
 
@@ -180,7 +189,7 @@ class RPTResponse(Message):
 
 
 class AuthorizationDataRequest(Message):
-    c_param = {"rpt": SINGLE_REQUIRED_STRING,
+    c_param = {"rpt": SINGLE_OPTIONAL_STRING,
                "ticket": SINGLE_REQUIRED_STRING}
 
 

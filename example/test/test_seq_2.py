@@ -1,4 +1,4 @@
-from urlparse import parse_qs
+from urllib.parse import parse_qs
 from oic.oic import ProviderConfigurationResponse
 from oic.oic import AuthorizationRequest
 from oic.oic import RegistrationResponse
@@ -29,7 +29,7 @@ RS_HOST = "https://localhost:%s" % RS_PORT
 RS_CookieHandler = CookieDealer(None)
 ressrv = uma_rs.main(RS_HOST, RS_CookieHandler)
 
-print "go!"
+print("go!")
 
 # ============================== 1 ===========================================
 # teach the RS about what the AS can do and where (=endpoints)

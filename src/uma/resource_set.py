@@ -5,12 +5,12 @@ import hashlib
 import json
 
 from uma.message import ResourceSetResponse
-from uma.uuid import uuid4
 from uma.message import StatusResponse
+import uuid
 
 __author__ = 'rolandh'
 
-RSR = [k for k in ResourceSetResponse.c_param.keys() if not k.startswith("_")]
+RSR = [k for k in list(ResourceSetResponse.c_param.keys()) if not k.startswith("_")]
 
 
 class UnknownObject(Exception):
@@ -20,6 +20,7 @@ class UnknownObject(Exception):
 class ResourceSetDB(object):
     def __init__(self, **kwargs):
         self.db = None
+        self.rsid2oid = {}
 
     def create(self, data, oid):
         raise NotImplemented()
@@ -27,7 +28,7 @@ class ResourceSetDB(object):
     def read(self, oid, rsid):
         raise NotImplemented()
 
-    def update(self, data, oid, rsid, if_match):
+    def update(self, data, oid, rsid):
         raise NotImplemented()
 
     def delete(self, oid, rsid):
@@ -47,7 +48,7 @@ class MemResourceSetDB(ResourceSetDB):
         rset = ResourceSetResponse().deserialize(data, "json")
         rset.weed()
 
-        m = hashlib.md5(rset.to_json())
+        m = hashlib.md5(rset.to_json().encode("utf8"))
         rsid = m.hexdigest()
         rset["_id"] = rsid
         # Need to add _id before verifying
@@ -58,8 +59,11 @@ class MemResourceSetDB(ResourceSetDB):
         except KeyError:
             self.db[oid] = {rsid: rset}
 
+        # backward lookup table
+        self.rsid2oid[rsid] = oid
+
         # add a revision number
-        self.etag[rsid] = str(uuid4())
+        self.etag[rsid] = str(uuid.uuid4())
         status = StatusResponse(_id=rsid, status="created")
         return status
 
@@ -71,14 +75,14 @@ class MemResourceSetDB(ResourceSetDB):
 
         return rset
 
-    def update(self, data, oid, rsid, if_match):
+    def update(self, data, oid, rsid):
         try:
             _ = self.db[oid][rsid]
         except KeyError:
             raise UnknownObject()
 
         _dat = json.loads(data)
-        _d = dict([(c, v) for c, v in _dat.items() if c in RSR and c != "_id"])
+        _d = dict([(c, v) for c, v in list(_dat.items()) if c in RSR and c != "_id"])
 
         _new = ResourceSetResponse(**_d)
         _new["_id"] = rsid
@@ -87,7 +91,7 @@ class MemResourceSetDB(ResourceSetDB):
         if _new:
             self.db[oid][rsid] = _new
             # new revision
-            self.etag[rsid] = str(uuid4())
+            self.etag[rsid] = str(uuid.uuid4())
             status = StatusResponse(_id=rsid, status="updated")
         else:
             status = StatusResponse(_id=rsid, status="updated")
@@ -101,7 +105,7 @@ class MemResourceSetDB(ResourceSetDB):
             raise UnknownObject()
 
     def list(self, oid):
-        return self.db[oid].keys()
+        return list(self.db[oid].keys())
 
 
 # class ShelveResourceSetDB(ResourceSetDB):

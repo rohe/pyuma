@@ -100,7 +100,7 @@ class Client(dynreg.Client):
             try:
                 pcr = self.provider_config(provider_url,
                                            serv_pattern=UMACONF_PATTERN)
-            except Exception, err:
+            except Exception as err:
                 raise
             else:
                 opc.update(pcr)
@@ -108,7 +108,7 @@ class Client(dynreg.Client):
             try:
                 pcr = self.provider_config(provider_url,
                                            serv_pattern=UMACONF_PATTERN)
-            except Exception, err:
+            except Exception as err:
                 raise
             else:
                 opc.update(pcr)
@@ -181,7 +181,7 @@ class Client(dynreg.Client):
                     "Basic %s:%s" % (u, p))
                 del ht_args["headers"]["auth"]
 
-            ht_args = [(k, v) for k, v in ht_args["headers"].items()]
+            ht_args = [(k, v) for k, v in list(ht_args["headers"].items())]
         else:
             ht_args = []
 
@@ -422,7 +422,7 @@ class UMAClient():
 
     def sign_enc_algs(self, typ):
         resp = {}
-        for key, val in PARAMMAP.items():
+        for key, val in list(PARAMMAP.items()):
             try:
                 resp[key] = self.registration_response[val % typ]
             except (TypeError, KeyError):

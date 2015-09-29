@@ -181,7 +181,7 @@ class Pool(object):
                 request_args["nonce"] = rndstr(16)
                 session["nonce"] = request_args["nonce"]
 
-        logger.info("client args: %s" % client.__dict__.items(), )
+        logger.info("client args: %s" % list(client.__dict__.items()), )
         logger.info("request_args: %s" % (request_args,))
 
         return client, request_args
@@ -201,7 +201,7 @@ class Pool(object):
         url, body, ht_args, cis = client.uri_and_body(
             AuthorizationRequest, cis, method="GET",
             request_args=request_args,
-            endpoint=client.provider_info.values()[0][
+            endpoint=list(client.provider_info.values())[0][
                 "authorization_endpoint"])
         logger.debug("body: %s" % body)
 
@@ -222,7 +222,7 @@ class Pool(object):
         try:
             client = self.init_client(session, key)
             # User info claims
-        except Exception, exc:
+        except Exception as exc:
             message = traceback.format_exception(*sys.exc_info())
             logger.error(message)
             return self.result(
@@ -247,13 +247,13 @@ class Pool(object):
         session["client"] = client
         resp_headers = [("Location", str(url))]
         if ht_args:
-            resp_headers.extend([(a, b) for a, b in ht_args.items()])
+            resp_headers.extend([(a, b) for a, b in list(ht_args.items())])
         logger.debug("resp_headers: %s" % resp_headers)
         start_response("302 Found", resp_headers)
         return []
 
     def get_accesstoken(self, client, authresp):
-        issuer = client.provider_info.keys()[0]
+        issuer = list(client.provider_info.keys())[0]
         #logger.debug("state: %s (%s)" % (client.state, msg["state"]))
         key = client.keyjar.get_verify_key(owner=issuer)
         kwargs = {"key": key}
@@ -308,7 +308,7 @@ class Pool(object):
             # get the access token
             try:
                 tokenresp = self.get_accesstoken(client, authresp)
-            except Exception, err:
+            except Exception as err:
                 logger.error("%s" % err)
                 raise
 

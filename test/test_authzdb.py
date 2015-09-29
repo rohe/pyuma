@@ -1,8 +1,8 @@
-from bson.errors import InvalidId
 from uma.authzdb import AuthzDB
 from uma.authzsrv import safe_name
 from uma.message import AuthzDescription
 from uma.resource_set import UnknownObject
+from bson.errors import BSONError
 
 __author__ = 'rolandh'
 
@@ -41,7 +41,7 @@ def test_1():
 
     assert item
     assert isinstance(item, AuthzDescription)
-    for key, val in rsd.items():
+    for key, val in list(rsd.items()):
         assert key in item
         assert item[key] == val
 
@@ -50,7 +50,7 @@ def test_1():
         assert False
     except UnknownObject:
         pass
-    except InvalidId:
+    except BSONError:
         pass
 
     res = authz_db.match(

@@ -9,6 +9,7 @@ from oic.oauth2 import AuthorizationResponse
 from oic.oauth2 import PBase
 from oic.utils.http_util import Response, Redirect, ServiceError
 from oic.utils.http_util import R2C
+from oic.utils.time_util import utc_time_sans_frac
 from oic.utils.webfinger import WebFinger
 
 from uma import UMAError
@@ -25,7 +26,7 @@ __author__ = 'roland'
 
 def trace(func, from_to, **kwargs):
     info = {
-        "time": time.time(),
+        "time": utc_time_sans_frac(),
         "func": func,
         "from_to": from_to
     }
@@ -261,7 +262,7 @@ class UmaCRS(object):
             resp_headers = [("Location", str(url))]
 
             if ht_args:
-                resp_headers.extend([(a, b) for a, b in ht_args.items()])
+                resp_headers.extend([(a, b) for a, b in list(ht_args.items())])
 
             resp = Redirect(url, headers=resp_headers)
         return resp

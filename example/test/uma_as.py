@@ -1,3 +1,4 @@
+import json
 import socket
 from mako.lookup import TemplateLookup
 from oic.utils.authn.authn_context import AuthnBroker
@@ -5,6 +6,7 @@ from oic.utils.authn.client import verify_client
 from oic.utils.authn.user import UserAuthnMethod, UsernamePasswordMako
 from oic.utils.authn.user import BasicAuthn
 from oic.utils.authz import Implicit
+from oic.utils.keyio import keyjar_init
 from oic.utils.sdb import SessionDB
 from oic.utils.userinfo import UserInfo
 from uma import authzsrv
@@ -43,12 +45,9 @@ USERDB = {
 
 USERINFO = UserInfo(USERDB)
 
-KEYS = {
-    "RSA": {
-        "key": "as.key",
-        "usage": ["enc", "sig"]
-    }
-}
+KEYS = [
+    {"type": "RSA", "key": "as.key", "use": ["enc", "sig"]},
+]
 
 
 class DummyAuthn(UserAuthnMethod):
@@ -100,22 +99,26 @@ def main(base, cookie_handler):
 
     }
 
+    base_url = "http://%s" % socket.gethostname()
     ab = AuthnBroker()
     ab.add("linda", DummyAuthn(None, "linda"))
     #AB.add("hans", DummyAuthn(None, "hans.granberg@example.org"))
     ab.add("UserPwd",
            UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
                                 "%s/authorization" % base),
-           10, "http://%s" % socket.gethostname())
-    ab.add("BasicAuthn", BasicAuthnExtra(None, PASSWD), 10,
-           "http://%s" % socket.gethostname())
+           10, base_url)
+    ab.add("BasicAuthn", BasicAuthnExtra(None, PASSWD), 10, base_url)
 
-    AUTHZSRV = authzsrv.OIDCUmaAS(base, SessionDB(), CDB, ab, USERINFO, AUTHZ,
-                                  verify_client, "1234567890", keyjar=None,
-                                  configuration=as_conf,
-                                  base_url=base)
+    AUTHZSRV = authzsrv.OidcDynRegUmaAS(
+        base, SessionDB(base_url), CDB, ab, USERINFO, AUTHZ,
+        verify_client, "1234567890", keyjar=None, configuration=as_conf,
+        base_url=base)
 
     cookie_handler.init_srv(AUTHZSRV)
-    init_keyjar(AUTHZSRV, KEYS, "static/jwk_as.json")
+    jwks = keyjar_init(AUTHZSRV, KEYS, "a%d")
+
+    fp = open("static/jwk_as.json", "w")
+    fp.write(json.dumps(jwks))
+    fp.close()
 
     return AUTHZSRV

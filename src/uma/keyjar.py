@@ -14,7 +14,7 @@ def init_keyjar(instance, keyspec, dump_filename="static/jwks.json"):
         instance.keyjar[""] = []
 
     kbl = []
-    for typ, info in keyspec.items():
+    for typ, info in list(keyspec.items()):
         typ = typ.upper()
         kb = KeyBundle(source="file://%s" % info["key"], fileformat="der",
                        keytype=typ)

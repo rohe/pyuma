@@ -27,46 +27,46 @@ if resp1.status_code == 200:
         "sp_entity_id": SP, "perm": DESC_BASE,
         "rsname": USER}))
     http_args = {"auth": (USER, "krall")}
-    resp2 = requests.request("GET", url, **http_args, verify=False)
+    resp2 = requests.request("GET", url, verify=False, **http_args)
     if resp2.status_code == 200:
         # Asking for info from IdP UMA Client
         obj = urllib.quote("%s@%s" % (USER, SP))
         resp3 = requests.request("GET", "%s/info/%s" % (IDP, obj))
 
         if resp3.status_code == 200:
-            print resp3.text
+            print(resp3.text)
             # get resource sets
             resp4 = requests.request("GET", "%s/resset/%s" % (
                 AS, urllib.quote(USER)), verify=False)
-            print resp4.text
+            print(resp4.text)
             # get assigned permissions
             resp4 = requests.request("GET", "%s/permits/%s" % (
                 AS, urllib.quote(USER)), verify=False)
-            print resp4.text
+            print(resp4.text)
         else:
-            print resp3.status_code, resp3.text
+            print(resp3.status_code, resp3.text)
     else:
-        print resp2.status_code, resp2.text
+        print(resp2.status_code, resp2.text)
 else:
-    print resp1.status_code, resp1.text
+    print(resp1.status_code, resp1.text)
 
     # Get provider_config
-    #provider_info = idp_client.provider_config(as_uri)
+    # provider_info = idp_client.provider_config(as_uri)
 
     # register as client
-    #reg_info = idp_client.register(provider_info["registration_endpoint"])
+    # reg_info = idp_client.register(provider_info["registration_endpoint"])
 
-    #http_args = idp_client.init_authentication_method(
+    # http_args = idp_client.init_authentication_method(
     #    {}, "client_secret_basic",
     #    user="linda.lindgren@example.com@sp.example.org",
     #    password="fornowany")
     #
-    #request_args = {
+    # request_args = {
     #    "response_type": "code",
     #    "scope": [idp_client.get_uma_scope("AAT"),
     #              idp_client.get_uma_scope("PAT")],
     #    "state": idp_client.state,
-    #}
+    # }
     #
-    #idp_client.do_authorization_request(request_args=request_args,
+    # idp_client.do_authorization_request(request_args=request_args,
     #                                    http_args=http_args)

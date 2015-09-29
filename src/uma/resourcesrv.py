@@ -1,8 +1,11 @@
 import logging
 import traceback
-from urllib import urlencode
+import six
+
+from six.moves.urllib.parse import urlencode
+
 from oic.oauth2 import rndstr, AuthorizationRequest, PBase
-from oic.oauth2 import JSON_ENCODED
+from oic.oauth2.util import JSON_ENCODED
 from oic.oauth2.provider import Endpoint
 import sys
 from oic.utils import http_util
@@ -112,6 +115,8 @@ class DataSetEndpoint(Endpoint):
 class ResourceServerBase(object):
     def __init__(self, dataset, symkey="", baseurl=""):
         self.dataset = dataset
+        self.rsd_map = {}
+        self.rsid2rsd = {}
         self.symkey = symkey
         self.permreg = PermissionRegistry()
         self.request2endpoint = REQUEST2ENDPOINT
@@ -297,21 +302,19 @@ class ResourceServerBase(object):
         :returns: A StatusResponse instance
         """
 
-        rsid = rndstr()
         response = self._register(
             owner, "PUT", endp="resource_set_registration_endpoint",
-            objekt=resource_set_descr, rsid=rsid, resp_cls=StatusResponse)
+            objekt=resource_set_descr, resp_cls=StatusResponse)
 
         # StatusResponse
         assert response["status"] == "created"
 
-        self.path2rsid[path] = rsid
+        _id = response["_id"]
         csi = dict(resource_set_descr=resource_set_descr)
-        csi["_id"] = response["_id"]
-        csi["_rev"] = response["_rev"]
-        csi["rsid"] = rsid
+        csi["_id"] = _id
         self.permreg.add_resource_set_description(owner, csi)
-        return rsid
+        self.rsid2rsd[_id] = resource_set_descr
+        return _id
 
     def register_complex_resource_set_description(self, owner,
                                                   resource_set_desc, path):
@@ -430,7 +433,7 @@ class ResourceServer1C(ResourceServerBase, Client):
         ht_args = self.client_authn_method[
             "bearer_header"](self).construct(ir, request_args=request_args)
 
-        url = self.provider_info.values()[0]["introspection_endpoint"]
+        url = list(self.provider_info.values())[0]["introspection_endpoint"]
 
         return self.request_and_return(url, IntrospectionResponse,
                                        body=ir.to_json(), body_type="json",
@@ -447,7 +450,7 @@ class ResourceServer1C(ResourceServerBase, Client):
         """
         try:
             pat = self.permreg.get(owner, "pat")["access_token"]
-        except Exception, err:
+        except Exception as err:
             raise Unknown(owner)
         else:
             azs = self.permreg.get(owner, "authzsrv")
@@ -573,7 +576,7 @@ class ResourceServer1C(ResourceServerBase, Client):
         resp_headers = [("Location", str(url))]
 
         if ht_args:
-            resp_headers.extend([(a, b) for a, b in ht_args.items()])
+            resp_headers.extend([(a, b) for a, b in list(ht_args.items())])
         logger.debug("resp_headers: %s" % resp_headers)
         start_response("302 Found", resp_headers)
         return []

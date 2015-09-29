@@ -7,7 +7,7 @@ class UMAInformationProvider(object):
     def __init__(self, **kwargs):
         pass
 
-    def build_resource_set_description(self, user):
+    def build_resource_set_descriptions(self, user):
         """
         Will return a list of ResourceSetDescriptions covering all
         resource sets belonging to the user.
@@ -28,14 +28,17 @@ class UMAInformationProvider(object):
         pass
 
     @staticmethod
-    def filter_by_permission(authz, scope):
+    def filter_by_permission(authz, scope=None):
         """
         :param authz: An IntrospectionResponse instance
         :param scope: The scope that access is asked for
+        :return: list of resource_set_description ids
         """
+
+        rsids = []
         now = utc_time_sans_frac()
         try:
-            assert now < authz["expires_at"]
+            assert now < authz["exp"]
         except KeyError:
             pass
         except AssertionError:
@@ -43,20 +46,20 @@ class UMAInformationProvider(object):
 
         for perm in authz["permissions"]:
             try:
-                assert now < perm["expires_at"]
+                assert now < perm["exp"]
             except KeyError:
                 pass
             except AssertionError:
-                return False
+                continue
 
             try:
                 assert scope in perm["scopes"]
             except AssertionError:
                 pass
             else:
-                return True
+                rsids.append(perm["resource_set_id"])
 
-        return False
+        return rsids
 
     def resource_name(self, path):
         """

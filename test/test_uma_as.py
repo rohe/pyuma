@@ -12,7 +12,7 @@ SCOPES = {
     "delete": SCOPE_BASE + "/delete"
 }
 
-ALL = [v for v in SCOPES.values()]
+ALL = [v for v in list(SCOPES.values())]
 
 
 def _eq(l1, l2):
@@ -24,12 +24,13 @@ def test_inital_add():
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 
-    uas.resource_set_registration_endpoint_(RSR_PATH, "PUT",
-                                            body=data,
-                                            owner="alice",
-                                            client_id="12345678")
+    uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="PUT",
+                                            body=data, client_id="12345678",
+                                            if_match="xyzzy")
 
     read_write = [SCOPES["read"], SCOPES["write"]]
+    uas.permission_registration_endpoint_("alice", )
+
     uas.store_permission("alice", "roger", "stuff", read_write)
 
     scopes = uas.read_permission("alice", "roger", "stuff")

@@ -7,3 +7,6 @@ PAT = "uma_protection"
 class UMAError(Exception):
     pass
 
+
+class Expired(UMAError):
+    pass
