@@ -1,6 +1,5 @@
 import logging
 import traceback
-import six
 
 from six.moves.urllib.parse import urlencode
 
@@ -35,7 +34,8 @@ class UnknownAuthzSrv(Exception):
 
 
 def client_init(ca_certs, client_authn_method, config):
-    _client = Client(ca_certs=ca_certs, client_authn_method=client_authn_method)
+    _client = Client(ca_certs=ca_certs,
+                     client_authn_methods=client_authn_method)
     for param in ["client_id", "client_secret", "redirect_uris",
                   "authorization_endpoint", "token_endpoint",
                   "token_revocation_endpoint"]:
@@ -82,6 +82,7 @@ class PermissionRegistry(object):
                 return rsd
 
         return None
+
 
 REQUEST2ENDPOINT = {
     "IntrospectionRequest": "introspection_endpoint",
@@ -178,7 +179,6 @@ class ResourceServerBase(object):
                                  host_id="rs.example.com").to_json()
         else:
             _as = self.permreg.get(owner, "authzsrv")
-            _pat = self.permreg.get(owner, "pat")["access_token"]
             # verify the RPT
             resp = self.do_introspection(owner, rpt, resource)
 
@@ -290,15 +290,13 @@ class ResourceServerBase(object):
                               message=prr,
                               resp_cls=PermissionRegistrationResponse)
 
-    def register_resource_set_description(self, owner, resource_set_descr,
-                                          path):
+    def register_resource_set_description(self, owner, resource_set_descr):
         """
         Registers a resource set description at the Authorization server
 
         :param owner:
         :param resource_set_descr: Resource Set Description in a JSON
             format
-        :param path: HTTP path at which the resource should be accessible
         :returns: A StatusResponse instance
         """
 
@@ -315,65 +313,6 @@ class ResourceServerBase(object):
         self.permreg.add_resource_set_description(owner, csi)
         self.rsid2rsd[_id] = resource_set_descr
         return _id
-
-    def register_complex_resource_set_description(self, owner,
-                                                  resource_set_desc, path):
-        try:
-            subsets = [ResourceSetDescription().from_json(v) for v in
-                       resource_set_desc["subsets"]]
-        except KeyError:
-            subsets = []
-
-        subset_id = []
-        for sub in subsets:
-            rsid = self.register_complex_resource_set_description(owner, sub,
-                                                                  path)
-            self.path2rsid[path] = rsid
-            subset_id.append(rsid)
-
-        if subset_id:
-            resource_set_desc["subsets"] = subset_id
-
-        rsid = self.register_resource_set_description(
-            owner, resource_set_desc.to_json(), path)
-        self.name2rsid[resource_set_desc["name"]] = rsid
-        return rsid
-
-    # def update_resource_set_description(self, owner, rsid, **kwargs):
-    #     """
-    #     Updates a resource set description at the Authorization server
-    #
-    #     :param owner:
-    #     :param rsid: The resource set identifier
-    #     :param kwargs: Whatever should be changed
-    #     :returns: A StatusResponse instance
-    #     """
-    #     authzsrv = self.permreg.get(owner, "authsrv")
-    #     pat = self.permreg.get(owner, "pat")
-    #
-    #     client = self.client[authzsrv]
-    #     csi = ResourceSetDescription(
-    #         **self.permreg.get(owner, "resource_set").to_dict())
-    #
-    #     for param in csi.parameters():
-    #         if param in ["_id", "_rev"]:  # Don't mess with these
-    #             continue
-    #         else:
-    #             try:
-    #                 csi[param] = kwargs[param]
-    #             except KeyError:
-    #                 pass
-    #
-    #
-    #     method = "PUT"
-    #     url, body, ht_args, csi = client.request_info(
-    #         ResourceSetDescription, method=method,
-    #         request_args=req_args, extra_args={"access_token": pat},
-    #         authn_method="bearer_header")
-    #
-    #     return client.request_and_return(url, StatusResponse,
-    #                                      method, body, body_type="json",
-    #                                      http_args=ht_args)
 
     def read_resource_set_description(self, owner, rsid):
         """
@@ -546,7 +485,7 @@ class ResourceServer1C(ResourceServerBase, Client):
         return self.request_and_return(url, StatusResponse, "GET",
                                        http_args=ht_args)
 
-    def begin(self, environ, start_response, session, opkey="", acr_value=""):
+    def begin(self, environ, start_response, session, acr_value=""):
         """Step 1: Get a access grant.
 
         :param environ:
@@ -632,3 +571,18 @@ class ResourceServer1C(ResourceServerBase, Client):
 
         wf = WebFinger(httpd=PBase(ca_certs=self.ca_certs))
         return wf.discovery_query(resource)
+
+    def collect_info(self, introspection_response, scope):
+        rsids = self.dataset.filter_by_permission(introspection_response, scope)
+
+        # Collect information
+        res = {}
+        for rsid in rsids:
+            owner, lid = self.rsid2rsd[rsid]
+            part = lid.split(':')
+            if len(part) == 2:  # every value for an attribute
+                res[part[1]] = self.dataset.db[part[0]][part[1]]
+            else:
+                res[part[1]] = part[2]
+
+        return res

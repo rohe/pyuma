@@ -76,11 +76,8 @@ client.provider_info = opc
 reg_info = client.construct_RegistrationRequest(request_args=_me)
 reg_resp = authzsrv.oidc_registration_endpoint(reg_info.to_json())
 regresp = RegistrationResponse().from_json(reg_resp.message)
-client.registration_response = regresp
-client.client_secret = regresp["client_secret"]
-client.client_id = regresp["client_id"]
-client.registration_expires = regresp["client_secret_expires_at"]
-client.registration_access_token = regresp["registration_access_token"]
+
+client.store_registration_info(regresp)
 
 # Get the PAT, should normally be a login and token request
 RESOURCE_OWNER = "linda"
@@ -122,23 +119,28 @@ for lid, _desc in res_set_desc:
     ro_map[lid] = {'_id': sr['_id'], 'resource_set_desc': _desc}
     ressrv.rsid2rsd[sr['_id']] = RESOURCE_OWNER, lid
 
+# ============================== 3 ===========================================
+# The requestore wants to access some information
 # pick up resource sets to work with
 res_set = authzsrv.resource_sets_by_user(RESOURCE_OWNER,
                                          ressrv.client.client_id)
+
+# Just pick one resource set id
+rsid = res_set[0]['_id']
 
 REQUESTOR = "alice"
 
 # set a permission such that the request below succeeds
 owner = safe_name(RESOURCE_OWNER, client.client_id)
-authzsrv.permit.set_permit(owner, REQUESTOR, res_set[0]['_id'],
-                           ressrv.dataset.scopes)
+authzsrv.permit.set_permit(owner, REQUESTOR, rsid, ressrv.dataset.scopes)
 
-# ============================== 3 ===========================================
 # The client does a first attempt at getting information from the RS
-# but without a RPT it only gets information about where the AS is.
+# (not shown here) but without a RPT it only gets information about where
+# the AS is.
+
 # The RS on the other hand registers the necessary permission at the AS
 
-prr = PermissionRegistrationRequest(resource_set_id=res_set[0]['_id'],
+prr = PermissionRegistrationRequest(resource_set_id=rsid,
                                     scopes=ressrv.dataset.scopes)
 
 resp = authzsrv.permission_registration_endpoint(prr.to_json(),
@@ -149,7 +151,8 @@ assert resp.status == "201 Created"
 ticket = PermissionRegistrationResponse().from_json(resp.message)["ticket"]
 
 # ============================== 4 ===========================================
-# Crank up the client
+# Crank up the client such that the relationship with the AS can be
+# settled.
 CLI_PORT = 8090
 CLI_BASE = "https://localhost:%s" % CLI_PORT
 
@@ -158,15 +161,20 @@ UMA_CLIENT = UMAUserInfo(CLI_BASE, ["%s/authz_cb" % CLI_BASE],
 
 _uma_client = UMA_CLIENT.client
 
-# Gather AS info
+# Gather AS info, both OIDC OP and UMA AS info
 opc = OIDCProviderConfiguration()
+
+# oidc_pcr comes from (1)
 _uma_client.handle_provider_config(oidc_pcr, authzsrv.baseurl, False, True)
 opc.update(oidc_pcr)
+
+# likewise with uma_pcr
 _uma_client.handle_provider_config(uma_pcr, authzsrv.baseurl, False, True)
 opc.update(uma_pcr)
+
 _uma_client.provider_info[opc["issuer"]] = opc
 
-# register at AS
+# register at the AS
 reg_info = _uma_client.construct_RegistrationRequest(
     request_args=_uma_client.registration_info)
 reg_resp = authzsrv.oauth_registration_endpoint(reg_info.to_json())
@@ -184,6 +192,7 @@ request_args = {"response_type": "code",
                 "state": _state,
                 "acr_values": [acr]}
 
+# Fake authentication event
 authn_event = AuthnEvent(REQUESTOR, identity.get('salt', ''),
                          authn_info="UserPassword",
                          time_stamp=int(time.time()))
@@ -193,8 +202,8 @@ sid = authzsrv.sdb.create_authz_session(authn_event, areq)
 grant = authzsrv.sdb[sid]["code"]
 _uma_client.token[REQUESTOR] = {"AAT": authzsrv.sdb.upgrade_to_token(grant)}
 
-# Get a RPT from the AS using the AAT as authentication and the ticket just
-# received.
+# Get a RPT from the AS using the AAT as authentication and the ticket
+# received in (3).
 
 authn = "Bearer %s" % _uma_client.token[REQUESTOR]["AAT"]["access_token"]
 request = AuthorizationDataRequest(ticket=ticket)
@@ -203,7 +212,7 @@ resp = authzsrv.rpt_endpoint(authn, request=request.to_json())
 rtr = RPTResponse().from_json(resp.message)
 _uma_client.token[REQUESTOR]["RPT"] = rtr["rpt"]
 
-# Introspection
+# Introspection of the RPT
 
 pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
 _rpt = _uma_client.token[REQUESTOR]["RPT"]
@@ -221,20 +230,6 @@ iresp = IntrospectionResponse().from_json(resp.message)
 assert iresp["active"] is True
 assert "permissions" in iresp
 
-rsids = ressrv.dataset.filter_by_permission(iresp,
-                                            'https://dirg.org.umu.se/uma/read')
-
-
-# Collect information
-res = {}
-for rsid in rsids:
-    owner, lid = ressrv.rsid2rsd[rsid]
-    # can now get the Resource set description
-    _data = ressrv.rsd_map[owner][lid]
-    part = lid.split(':')
-    if len(part) == 2:  # every value for an attribute
-        res[part[1]] = ressrv.dataset.db[part[0]][part[1]]
-    else:
-        res[part[1]] = part[2]
+res = ressrv.collect_info(iresp, 'https://dirg.org.umu.se/uma/read')
 
 print(res)
