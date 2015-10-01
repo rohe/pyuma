@@ -92,9 +92,9 @@ class MemResourceSetDB(ResourceSetDB):
             self.db[oid][rsid] = _new
             # new revision
             self.etag[rsid] = str(uuid.uuid4())
-            status = StatusResponse(_id=rsid, status="updated")
+            status = StatusResponse(_id=rsid)
         else:
-            status = StatusResponse(_id=rsid, status="updated")
+            status = StatusResponse(_id=rsid)
 
         return status
 

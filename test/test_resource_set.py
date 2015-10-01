@@ -52,10 +52,7 @@ def test_update():
     assert status["_id"]
 
     rsd["scopes"].append("http://xenosmilus2.umdc.umu.se/uma/read/contact")
-
-    status2 = rset.update(rsd.to_json(), "oid", status["_id"], )
-    assert status2["status"] == "updated"
-
+    rset.update(rsd.to_json(), "oid", status["_id"], )
     after = rset.read("oid", status["_id"])
 
     assert len(after["scopes"]) == 5

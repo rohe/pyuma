@@ -341,10 +341,9 @@ class UmaAS(object):
                                        content="application/json",
                                        headers=[("ETag", _etag)])
                 elif func == self.resource_set.update:
-                    if body["status"] == "updated":
-                        _etag = self.resource_set.etag[body["_id"]]
-                        response = NoContent(content="application/json",
-                                             headers=[("ETag", _etag)])
+                    _etag = self.resource_set.etag[body["_id"]]
+                    response = NoContent(content="application/json",
+                                         headers=[("ETag", _etag)])
                 elif func == self.resource_set.list:
                     response = Response(json.dumps(body))
 
