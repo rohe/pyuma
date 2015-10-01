@@ -41,6 +41,7 @@ from uma.permission import Permission
 
 from oic.utils.time_util import utc_time_sans_frac
 from oic.oauth2.provider import endpoint_ava
+
 __author__ = 'rolandh'
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class UnknownResourceSet(Exception):
 class ResourceSetRegistrationEndpoint(Endpoint):
     etype = "resource_set_registration"
     url = "resource_set_registration"
+
 
 class IntrospectionEndpoint(Endpoint):
     etype = "introspection"
@@ -334,11 +336,10 @@ class UmaAS(object):
                     self.permit.delete_permit_by_resource_id(entity, rsid)
                     response = NoContent()
                 elif func == self.resource_set.create:
-                    if body["status"] == "created":
-                        _etag = self.resource_set.etag[body["_id"]]
-                        response = Created(body.to_json(),
-                                           content="application/json",
-                                           headers=[("ETag", _etag)])
+                    _etag = self.resource_set.etag[body["_id"]]
+                    response = Created(body.to_json(),
+                                       content="application/json",
+                                       headers=[("ETag", _etag)])
                 elif func == self.resource_set.update:
                     if body["status"] == "updated":
                         _etag = self.resource_set.etag[body["_id"]]
@@ -457,7 +458,7 @@ class UmaAS(object):
                     irep = IntrospectionResponse(
                         active=True,
                         exp=perms[0]["exp"],
-                        permissions= perms
+                        permissions=perms
                     )
                     logger.debug("response: %s" % irep.to_json())
                     response = Response(irep.to_json(),
@@ -543,7 +544,7 @@ class UmaAS(object):
         logger.debug("provider_info_response: %s" % (_response.to_dict(),))
         return _response
 
-    #noinspection PyUnusedLocal
+    # noinspection PyUnusedLocal
     def providerinfo_endpoint_(self, handle="", **kwargs):
         logger.debug("@providerinfo_endpoint")
         try:

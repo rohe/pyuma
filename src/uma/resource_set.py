@@ -64,7 +64,7 @@ class MemResourceSetDB(ResourceSetDB):
 
         # add a revision number
         self.etag[rsid] = str(uuid.uuid4())
-        status = StatusResponse(_id=rsid, status="created")
+        status = StatusResponse(_id=rsid)
         return status
 
     def read(self, oid, rsid):

@@ -304,9 +304,6 @@ class ResourceServerBase(object):
             owner, "PUT", endp="resource_set_registration_endpoint",
             objekt=resource_set_descr, resp_cls=StatusResponse)
 
-        # StatusResponse
-        assert response["status"] == "created"
-
         _id = response["_id"]
         csi = dict(resource_set_descr=resource_set_descr)
         csi["_id"] = _id
