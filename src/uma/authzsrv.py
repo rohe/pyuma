@@ -340,7 +340,9 @@ class UmaAS(object):
                     _etag = self.resource_set.etag[body["_id"]]
                     response = Created(body.to_json(),
                                        content="application/json",
-                                       headers=[("ETag", _etag)])
+                                       headers=[("ETag", _etag),
+                                                ("Location", "/{}/{}".format(RSR_PATH, body["_id"]))
+                                                ])
                 elif func == self.resource_set.update:
                     _etag = self.resource_set.etag[body["_id"]]
                     response = NoContent(content="application/json",

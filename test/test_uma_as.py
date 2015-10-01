@@ -33,6 +33,9 @@ def test_inital_add():
     _stat = StatusResponse().from_json(resp.message)
     rsid = _stat["_id"]
 
+    headers = dict(resp.headers)
+    assert headers["Location"] == "/{}/{}".format(RSR_PATH, rsid)
+
     read_write = [SCOPES["read"], SCOPES["write"]]
     uas.permission_registration_endpoint_("alice", request=PermissionRegistrationRequest(
         resource_set_id=rsid, scopes=read_write).to_json())
