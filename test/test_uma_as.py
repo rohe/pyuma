@@ -30,8 +30,8 @@ def test_inital_add():
     resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="POST",
                                                    body=data, client_id="12345678",
                                                    if_match="xyzzy")
-
-    rsid = json.loads(resp.message)["_id"]
+    _stat = StatusResponse().from_json(resp.message)
+    rsid = _stat["_id"]
 
     read_write = [SCOPES["read"], SCOPES["write"]]
     uas.permission_registration_endpoint_("alice", request=PermissionRegistrationRequest(
