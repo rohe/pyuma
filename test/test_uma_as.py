@@ -1,5 +1,8 @@
+import json
+from oic.utils.http_util import NotFound, NoContent
+import pytest
 from uma.authzsrv import UmaAS, RSR_PATH
-from uma.message import ResourceSetDescription, StatusResponse
+from uma.message import ResourceSetDescription, StatusResponse, PermissionRegistrationRequest
 
 __author__ = 'roland'
 
@@ -24,16 +27,22 @@ def test_inital_add():
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 
-    uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="PUT",
-                                            body=data, client_id="12345678",
-                                            if_match="xyzzy")
+    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="POST",
+                                                   body=data, client_id="12345678",
+                                                   if_match="xyzzy")
+    _stat = StatusResponse().from_json(resp.message)
+    rsid = _stat["_id"]
+
+    headers = dict(resp.headers)
+    assert headers["Location"] == "/{}/{}".format(RSR_PATH, rsid)
 
     read_write = [SCOPES["read"], SCOPES["write"]]
-    uas.permission_registration_endpoint_("alice", )
+    uas.permission_registration_endpoint_("alice", request=PermissionRegistrationRequest(
+        resource_set_id=rsid, scopes=read_write).to_json())
 
-    uas.store_permission("alice", "roger", "stuff", read_write)
+    uas.store_permission("alice", "roger", {rsid: read_write})
 
-    scopes = uas.read_permission("alice", "roger", "stuff")
+    scopes, ts = uas.read_permission("alice", "roger", rsid)
 
     assert _eq(scopes, read_write)
 
@@ -43,20 +52,28 @@ def test_delete_resource_set():
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 
-    resp = uas.resource_set_registration_endpoint_(RSR_PATH, "PUT",
+    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="POST",
                                                    body=data, owner="alice",
                                                    client_id="12345678")
 
     _stat = StatusResponse().from_json(resp.message)
+    rsid = _stat["_id"]
 
     read_write = [SCOPES["read"], SCOPES["write"]]
-    uas.store_permission("alice", "roger", "stuff", read_write)
+    uas.store_permission("alice", "roger", {rsid: read_write})
 
-    dresp = uas.resource_set_registration_endpoint_(RSR_PATH+_stat["_id"],
-                                                    "DELETE", owner="alice",
-                                                    client_id="12345678")
+    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH + rsid,
+                                            method="DELETE", owner="alice",
+                                            client_id="12345678")
+    assert isinstance(resp, NoContent)
 
-    scopes = uas.read_permission("alice", "roger", "stuff")
+    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH + "/" + rsid,
+                                                   method="GET", owner="alice",
+                                                   client_id="12345678")
+    assert isinstance(resp, NotFound)
+
+    with pytest.raises(KeyError):
+        uas.read_permission("alice", "roger", rsid)  # make sure permission is removed when rs is deleted
 
 
 if __name__ == "__main__":

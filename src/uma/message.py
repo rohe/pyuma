@@ -89,10 +89,8 @@ class ResourceSetResponse(ResourceSetDescription):
 
 class StatusResponse(Message):
     c_param = {
-        "status": SINGLE_REQUIRED_STRING,
         "_id": SINGLE_REQUIRED_STRING,
-        # "_rev": SINGLE_REQUIRED_STRING,
-        "policy_uri": SINGLE_OPTIONAL_STRING
+        "user_access_policy_uri": SINGLE_OPTIONAL_STRING
     }
 
 

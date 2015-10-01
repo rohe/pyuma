@@ -1,5 +1,6 @@
 from io import StringIO
 import json
+import os
 from oic.utils.http_util import Response
 from uma.message import IntrospectionResponse
 from uma.message import AuthzDescription
@@ -11,15 +12,7 @@ from oic.utils.time_util import epoch_in_a_while
 
 __author__ = 'roland'
 
-
-def test_init():
-    jrs = JsonResourceServer("resource/", "info/", "https://example.com")
-    assert jrs
-
-
-def test_alice_add():
-    jrs = JsonResourceServer("resource/", "info/", "https://example.com")
-
+def create_alice_resource(jrs):
     body = json.dumps({"foo": "bar"})
 
     environ = {"REQUEST_METHOD": "POST", "REMOTE_USER": "ALICE",
@@ -29,11 +22,26 @@ def test_alice_add():
     user = "alice"
     resp = jrs.do("info/alice", environ, user=user)
 
+    return resp
+
+def test_init():
+    jrs = JsonResourceServer("resource/", "info/", "https://example.com")
+    assert jrs
+
+
+def test_alice_add(tmpdir):
+    root_dir = os.path.join(tmpdir.strpath, "resource")
+    jrs = JsonResourceServer(root_dir, "info/", "https://example.com")
+
+    resp = create_alice_resource(jrs)
     assert not isinstance(resp, ErrorResponse)
 
 
-def test_roger_read():
-    jrs = JsonResourceServer("resource/", "info/", "https://example.com")
+def test_roger_read(tmpdir):
+    root_dir = os.path.join(tmpdir.strpath, "resource/")
+    jrs = JsonResourceServer(root_dir, "info/", "https://example.com")
+
+    create_alice_resource(jrs)
 
     environ = {"REQUEST_METHOD": "GET", "REMOTE_USER": "ROGER"}
     ad = AuthzDescription(resource_set_id=0,
@@ -81,8 +89,10 @@ def test_roger_create():
     assert isinstance(resp, ErrorResponse)
 
 
-def test_alice_client_read():
-    jrs = JsonResourceServer("resource/", "info/", "https://example.com")
+def test_alice_client_read(tmpdir):
+    root_dir = os.path.join(tmpdir.strpath, "resource/")
+    jrs = JsonResourceServer(root_dir, "info/", "https://example.com")
+    create_alice_resource(jrs)
 
     body = json.dumps({"bar": "soap"})
 
@@ -109,8 +119,10 @@ def test_alice_client_read():
     assert isinstance(resp, Response)
 
 
-def test_roger_patch():
-    jrs = JsonResourceServer("resource/", "info/", "https://example.com")
+def test_roger_patch(tmpdir):
+    root_dir = os.path.join(tmpdir.strpath, "resource/")
+    jrs = JsonResourceServer(root_dir, "info/", "https://example.com")
+    create_alice_resource(jrs)
 
     body = json.dumps({"bar": "soap"})
 
@@ -140,8 +152,9 @@ def test_roger_patch():
     assert resp.message == '{"_id": "1"}'
 
 
-def test_get_owner():
-    jrs = JsonResourceServer("resource/", "info/", "https://example.com",
+def test_get_owner(tmpdir):
+    root_dir = os.path.join(tmpdir.strpath, "resource/")
+    jrs = JsonResourceServer(root_dir, "info/", "https://example.com",
                              ["alice"])
     jrs.index["alice"] = 1
     assert jrs.get_owner("info/alice/1") == "alice"
