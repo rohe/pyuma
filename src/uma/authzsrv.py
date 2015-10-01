@@ -715,10 +715,8 @@ class UmaAS(object):
         for rsid in _rem:
             self.permit.delete_permit(user, requestor, rsid)
 
-    def read_permission(self, user, requestor, name):
-        _user = safe_name(user, requestor)
-        obj = self.resource_set.read(_user, name)
-        return self.permit.get_permit(user, requestor, obj["_id"])
+    def read_permission(self, user, requestor, rsid):
+        return self.permit.get_permit(user, requestor, rsid)
 
     def rec_rm_permission(self, user, requestor, rsid):
         """

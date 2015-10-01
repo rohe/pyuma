@@ -1,5 +1,6 @@
+import json
 from uma.authzsrv import UmaAS, RSR_PATH
-from uma.message import ResourceSetDescription, StatusResponse
+from uma.message import ResourceSetDescription, StatusResponse, PermissionRegistrationRequest
 
 __author__ = 'roland'
 
@@ -24,16 +25,18 @@ def test_inital_add():
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 
-    uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="PUT",
-                                            body=data, client_id="12345678",
-                                            if_match="xyzzy")
+    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="POST",
+                                                   body=data, client_id="12345678",
+                                                   if_match="xyzzy")
+
+    rsid = json.loads(resp.message)["_id"]
 
     read_write = [SCOPES["read"], SCOPES["write"]]
-    uas.permission_registration_endpoint_("alice", )
+    uas.permission_registration_endpoint_("alice", request=PermissionRegistrationRequest(resource_set_id=rsid, scopes=read_write).to_json())
 
-    uas.store_permission("alice", "roger", "stuff", read_write)
+    uas.store_permission("alice", "roger", {rsid: read_write})
 
-    scopes = uas.read_permission("alice", "roger", "stuff")
+    scopes, ts = uas.read_permission("alice", "roger", rsid)
 
     assert _eq(scopes, read_write)
 
