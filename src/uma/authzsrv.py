@@ -19,6 +19,7 @@ from oic.oauth2.provider import Endpoint
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.authn.user import ToOld
 from oic.utils.http_util import BadRequest
+from oic.utils.http_util import NotFound
 from oic.utils.http_util import NoContent
 from oic.utils.http_util import Created
 from oic.utils.http_util import Unauthorized
@@ -260,8 +261,8 @@ class UmaAS(object):
     #     msg = RPTResponse(rpt=rpt)
     #     return Response(msg.to_json(), content="application/json")
 
-    def resource_set_registration_endpoint_(self, entity, path, method, body,
-                                            client_id, if_match="",
+    def resource_set_registration_endpoint_(self, entity, path, method,
+                                            client_id, body="", if_match="",
                                             **kwargs):
         """
         The endpoint at which the resource server handles resource sets
@@ -324,7 +325,7 @@ class UmaAS(object):
             response = BadRequest(_err.to_json(), content="application/json")
         except UnknownObject:
             _err = ErrorResponse(error="not_found")
-            response = BadRequest(_err.to_json(), content="application/json")
+            response = NotFound(_err.to_json(), content="application/json")
         else:
             response = None
             if isinstance(body, ErrorResponse):
@@ -822,8 +823,8 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
             entity, client_id = client_authentication(self.sdb, kwargs["authn"])
         except AuthnFailed:
             return Unauthorized()
-        return self.resource_set_registration_endpoint_(path, method,
-                                                        body, entity, client_id,
+        return self.resource_set_registration_endpoint_(entity, path, method,
+                                                        client_id, body,
                                                         if_match, **kwargs)
 
     def dynamic_client_endpoint(self, request="", environ=None, **kwargs):
