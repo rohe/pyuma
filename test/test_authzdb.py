@@ -1,3 +1,4 @@
+import pytest
 from uma.authzdb import AuthzDB
 from uma.authzsrv import safe_name
 from uma.message import AuthzDescription
@@ -17,6 +18,7 @@ def _eq(l1, l2):
 ATTR = "http://fim.example.com/uma/attr"
 
 
+@pytest.mark.db
 def test_1():
     authz_db = AuthzDB(AuthzDescription, DB_NAME, COLLECTION)
     authz_db.restart(COLLECTION)
@@ -80,6 +82,7 @@ def test_1():
     assert res is False
 
 
+@pytest.mark.db
 def test_2():
     owner = DB_NAME
     client_id = "http://xenosmilus2.umdc.umu.se:8089/foo"
