@@ -1,4 +1,3 @@
-import os
 import time
 
 from oic.oic import ProviderConfigurationResponse
@@ -21,6 +20,7 @@ from uma.message import StatusResponse
 from uma.message import PermissionRegistrationRequest
 from uma.message import ProviderConfiguration
 from uma.userinfo import UMAUserInfo
+
 import idm_rs
 
 AS_PORT = 8088
@@ -95,7 +95,8 @@ ressrv.authz_registration(RESOURCE_OWNER, _dict, opc["issuer"], RESSRV_CLI_KEY)
 
 # ============================== 2 ===========================================
 # create resource set descriptions and register them.
-res_set_desc = ressrv.dataset.build_resource_set_descriptions(RESOURCE_OWNER)
+res_set_desc = ressrv.dataset.build_resource_set_descriptions(
+    {"user": RESOURCE_OWNER})
 ressrv.rsd_map[RESOURCE_OWNER] = {}
 
 # Let the description be consumed by the AS
@@ -230,6 +231,6 @@ iresp = IntrospectionResponse().from_json(resp.message)
 assert iresp["active"] is True
 assert "permissions" in iresp
 
-res = ressrv.collect_info(iresp, 'https://dirg.org.umu.se/uma/read')
+res = ressrv.collect_info(iresp, 'https://dirg.org.umu.se/uma/get')
 
 print(res)

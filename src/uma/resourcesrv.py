@@ -9,6 +9,7 @@ from oic.oauth2.provider import Endpoint
 import sys
 from oic.utils import http_util
 from oic.utils.http_util import Response
+from oic.utils.time_util import utc_time_sans_frac
 from oic.utils.webfinger import WebFinger
 from uma.client import Client
 from uma.message import IntrospectionRequest
@@ -572,8 +573,49 @@ class ResourceServer1C(ResourceServerBase, Client):
         wf = WebFinger(httpd=PBase(ca_certs=self.ca_certs))
         return wf.discovery_query(resource)
 
+    @staticmethod
+    def filter_by_permission(intro, scope=None):
+        """
+        :param intro: An IntrospectionResponse instance
+        :param scope: The scope that access is asked for
+        :return: list of resource_set_description ids
+        :rtype: list
+        """
+
+        rsids = []
+        now = utc_time_sans_frac()
+        try:
+            assert now < intro["exp"]
+        except KeyError:
+            pass
+        except AssertionError:
+            return False
+
+        for perm in intro["permissions"]:
+            try:
+                assert now < perm["exp"]
+            except KeyError:
+                pass
+            except AssertionError:
+                continue
+
+            try:
+                assert scope in perm["scopes"]
+            except AssertionError:
+                pass
+            else:
+                rsids.append(perm["resource_set_id"])
+
+        return rsids
+
     def collect_info(self, introspection_response, scope):
-        rsids = self.dataset.filter_by_permission(introspection_response, scope)
+        """
+        :param introspection_response:
+        :param scope:
+        :return: Dictionary of attributes and values
+        :rtype: dict
+        """
+        rsids = self.filter_by_permission(introspection_response, scope)
 
         # Collect information
         res = {}

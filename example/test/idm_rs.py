@@ -7,6 +7,7 @@ from oic.utils.keyio import keyjar_init
 from uma import PAT
 from uma.resourcesrv import ResourceServer1C
 from idm import UserInfo
+from uma.rest_wrap import RESTIDMWarp
 
 __author__ = 'roland'
 
@@ -35,8 +36,6 @@ USERDB = {
     }
 }
 
-SCOPES = ["https://dirg.org.umu.se/uma/read"]
-
 
 def main(base_url, cookie_handler):
     config = {
@@ -58,7 +57,7 @@ def main(base_url, cookie_handler):
         "scope": PAT
     }
 
-    dataset = UserInfo(USERDB, config["baseurl"], SCOPES)
+    dataset = RESTIDMWarp(USERDB, baseurl=config["baseurl"])
     res_srv = ResourceServer1C(dataset, **config)
 
     jwks = keyjar_init(res_srv, KEYS, "a%d")
