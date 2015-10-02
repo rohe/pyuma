@@ -114,7 +114,7 @@ for lid, _desc in res_set_desc:
                                                       authn=authn,
                                                       body=_desc.to_json())
     sr = StatusResponse().from_json(res.message)
-    assert sr["status"] == "created"
+    assert res.status == "201 Created"
 
     # The resource server should keep a map between resource and AS (_rev,_id)
     ro_map[lid] = {'_id': sr['_id'], 'resource_set_desc': _desc}
