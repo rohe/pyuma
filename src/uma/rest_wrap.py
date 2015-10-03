@@ -38,7 +38,7 @@ class RESTIDMWarp(DBWrap):
             scopes = self.scopes
 
         _rsd = ResourceSetDescription(scopes=scopes, name=name)
-        self.lid2rsd[_id] = scopes
+        self.lid2scopes[_id] = scopes
         if parent is not None:
             try:
                 self.child_lid[parent].append(_id)
@@ -115,4 +115,4 @@ class RESTIDMWarp(DBWrap):
         """
         scope = operation2scope(operation)
         return [(l, scope) for l in self.query2local_id(path, query) if
-                scope in self.lid2rsd[l]]
+                scope in self.lid2scopes[l]]

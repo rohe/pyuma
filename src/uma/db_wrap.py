@@ -5,7 +5,7 @@ class DBWrap(object):
     def __init__(self, db, scopes, **kwargs):
         self.db = db
         self.scopes = scopes
-        self.lid2rsd = {}
+        self.lid2scopes = {}
         self.child_lid = {}
 
     def build_resource_set_descriptions(self, filter, scopes=None):

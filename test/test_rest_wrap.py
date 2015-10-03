@@ -26,16 +26,23 @@ USERDB = {
 class TestRESTIDWrap(object):
     @pytest.fixture(autouse=True)
     def create_wrap(self):
-        self.riw = RESTIDMWarp(USERDB)
+        self.riw = RESTIDMWarp(USERDB, baseurl="https://restidm.example.com")
 
     def test_build_resource_set_descriptions(self):
-        rss = self.riw.build_resource_set_descriptions("hans")
+        rss = self.riw.build_resource_set_descriptions({"user":"linda"})
         print(rss)
         assert len(rss) == 6
 
     def test_query2local_id(self):
+        rss = self.riw.build_resource_set_descriptions({"user":"linda"})
         lids = self.riw.query2local_id("linda", "attr=displayName")
 
         print(lids)
         assert lids == ['linda:displayName:Linda Lindgren']
 
+    def test_query2permission_registration_request_primer(self):
+        rss = self.riw.build_resource_set_descriptions({"user":"linda"})
+        prim = self.riw.query2permission_registration_request_primer(
+            "GET", "linda", "attr=displayName&attr=sn")
+
+        assert prim
