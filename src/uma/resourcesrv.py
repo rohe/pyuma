@@ -119,6 +119,7 @@ class ResourceServerBase(object):
         self.dataset = dataset
         self.rsd_map = {}
         self.rsid2rsd = {}
+        self.lid_rsid = {}
         self.symkey = symkey
         self.permreg = PermissionRegistry()
         self.request2endpoint = REQUEST2ENDPOINT
@@ -622,6 +623,9 @@ class ResourceServer1C(ResourceServerBase, Client):
             if len(part) == 2:  # every value for an attribute
                 res[part[1]] = self.dataset.db[part[0]][part[1]]
             else:
-                res[part[1]] = part[2]
+                try:
+                    res[part[1]].append(part[2])
+                except KeyError:
+                    res[part[1]] = [part[2]]
 
         return res

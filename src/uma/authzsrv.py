@@ -3,8 +3,6 @@ import logging
 import socket
 import traceback
 import sys
-import time
-from urllib.parse import urljoin
 
 from oic.oauth2.dynreg import Provider as OAUTH2Provider
 from oic.oic.provider import Provider as OIDCProvider
@@ -42,6 +40,7 @@ from uma.permission import Permission
 
 from oic.utils.time_util import utc_time_sans_frac
 from oic.oauth2.provider import endpoint_ava
+from src.uma.permission import PermissionRequests
 
 __author__ = 'rolandh'
 
@@ -230,6 +229,7 @@ class UmaAS(object):
             self.baseurl += "/"
         self.session = Session()
         self.permit = Permission()
+        self.permission_requests = PermissionRequests()
         self.map_rsid_id = {}
         self.map_id_rsid = {}
         self.map_user_id = {}
@@ -341,7 +341,9 @@ class UmaAS(object):
                     response = Created(body.to_json(),
                                        content="application/json",
                                        headers=[("ETag", _etag),
-                                                ("Location", "/{}/{}".format(RSR_PATH, body["_id"]))
+                                                ("Location",
+                                                 "/{}/{}".format(RSR_PATH,
+                                                                 body["_id"]))
                                                 ])
                 elif func == self.resource_set.update:
                     _etag = self.resource_set.etag[body["_id"]]
@@ -487,7 +489,7 @@ class UmaAS(object):
         _ticket = rndstr(24)
         logging.debug("Registering permission request: %s" % request)
         resp = PermissionRegistrationResponse(ticket=_ticket)
-        self.permit.add_request(_ticket, request)
+        self.permission_requests.add_request(_ticket, request)
 
         return Created(resp.to_json(), content="application/json")
 
@@ -610,57 +612,59 @@ class UmaAS(object):
 
         # Get request permission that the resource server has registered
         try:
-            permission = self.permit.get_request(adr["ticket"])
+            prr_list = self.permission_requests.get_request(adr["ticket"])
         except KeyError:
             errmsg = ErrorResponse(error="invalid_ticket")
             return BadRequest(errmsg.to_json(), content="application/json")
-        else:
-            self.permit.del_request(adr["ticket"])
-            _rsid = permission["resource_set_id"]
 
-        # Verify that the scopes are defined for the resource set
-        owner = self.resource_set.rsid2oid[_rsid]
-        rsd = self.resource_set.read(owner, _rsid)
-        for scope in permission["scopes"]:
-            try:
-                assert scope in rsd["scopes"]
-            except AssertionError:
-                errmsg = ErrorResponse(error="not_authorized",
-                                       error_description="Undefined scopes")
-                return BadRequest(errmsg.to_json(), content="application/json")
-
-        # Is there any permissions registered by the owner, if so verify
-        # that it allows what is requested. Return what is allowed !
-
+        self.permission_requests.del_request(adr["ticket"])
         try:
             _rpt = adr["rpt"]
         except KeyError:
             _rpt = rndstr(32)
 
-        try:
-            allow_scopes, timestamp = self.permit.get_permit(owner, entity,
-                                                             _rsid)
-        except KeyError:  #
-            errmsg = ErrorResponse(error="not_authorized",
-                                   error_description="No permission given")
-            return BadRequest(errmsg.to_json(), content="application/json")
-        else:
-            _scopes = []
-            for scope in permission["scopes"]:
+        for prr in prr_list:
+            _rsid = prr["resource_set_id"]
+
+            # Verify that the scopes are defined for the resource set
+            owner = self.resource_set.rsid2oid[_rsid]
+            rsd = self.resource_set.read(owner, _rsid)
+            for scope in prr["scopes"]:
                 try:
-                    assert scope in allow_scopes
+                    assert scope in rsd["scopes"]
                 except AssertionError:
-                    pass
-                else:
-                    _scopes.append(scope)
+                    errmsg = ErrorResponse(error="not_authorized",
+                                           error_description="Undefined scopes")
+                    return BadRequest(errmsg.to_json(),
+                                      content="application/json")
 
-            # bind _requester to specific RPT for this user
+            # Is there any permissions registered by the owner, if so verify
+            # that it allows what is requested. Return what is allowed !
+
             try:
-                self.eid2rpt[owner][entity] = _rpt
-            except KeyError:
-                self.eid2rpt[owner] = {entity: _rpt}
+                allow_scopes, timestamp = self.permit.get_permit(owner, entity,
+                                                                 _rsid)
+            except KeyError:  #
+                errmsg = ErrorResponse(error="not_authorized",
+                                       error_description="No permission given")
+                return BadRequest(errmsg.to_json(), content="application/json")
+            else:
+                _scopes = []
+                for scope in prr["scopes"]:
+                    try:
+                        assert scope in allow_scopes
+                    except AssertionError:
+                        pass
+                    else:
+                        _scopes.append(scope)
 
-            self.register_permission(owner, _rpt, _rsid, _scopes)
+                # bind _requester to specific RPT for this user
+                try:
+                    self.eid2rpt[owner][entity] = _rpt
+                except KeyError:
+                    self.eid2rpt[owner] = {entity: _rpt}
+
+                self.register_permission(owner, _rpt, _rsid, _scopes)
 
         rsp = AuthorizationDataResponse(rpt=_rpt)
 

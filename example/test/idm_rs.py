@@ -29,7 +29,7 @@ USERDB = {
     "linda": {
         "displayName": "Linda Lindgren",
         "eduPersonNickname": "Linda",
-        "givenName": "Linda",
+        "givenName": ["Linda", "Maria"],
         "sn": "Lindgren",
         "email": "linda@example.com",
         "uid": "linda"

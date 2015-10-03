@@ -40,7 +40,10 @@ class RESTIDMWarp(DBWrap):
         _rsd = ResourceSetDescription(scopes=scopes, name=name)
         self.lid2rsd[_id] = scopes
         if parent is not None:
-            self.child_lid[parent] = _id
+            try:
+                self.child_lid[parent].append(_id)
+            except:
+                self.child_lid[parent] = [_id]
         return _id, _rsd
 
     def build_resource_set_descriptions(self, filter, scopes=None):
@@ -103,7 +106,7 @@ class RESTIDMWarp(DBWrap):
         return _lids
 
     def query2permission_registration_request_primer(self, operation, path,
-                                                    query):
+                                                     query):
         """
         :param operation: Which REST operation that is performed
         :param path: The URL path - TODO deducting the base url path

@@ -1,32 +1,33 @@
+import json
 from oic.utils.time_util import utc_time_sans_frac
 from uma.message import PermissionRegistrationRequest
 
 __author__ = 'roland'
 
 
-class Permission(object):
+class PermissionRequests(object):
     def __init__(self):
-        self.db = {}
         self.request = {}
-
-    def init_owner(self, owner):
-        self.db[owner] = {
-            "permit": {},
-            "accepted": {},
-            "permitted_at": {}
-        }
 
     def add_request(self, ticket, req):
         """
-        :param req: The Permission Registration Request as a string
+        :param req: The Permission Registration Request as a JSON encoded string
+            Note that the request can be a list of requests.
         """
-        self.request[ticket] = PermissionRegistrationRequest().from_json(req)
+        decoded_req = json.loads(req)
+        if isinstance(decoded_req, list):
+            prr_req = []
+            for item in decoded_req:
+                prr_req.append(PermissionRegistrationRequest(**item))
+            self.request[ticket] = prr_req
+        else:
+            self.request[ticket] = [PermissionRegistrationRequest(**decoded_req)]
 
     def get_request(self, ticket):
         """
         :param ticket: The ticket returned when the Permission Registration
             Request was made
-        :return: A umu.message.PermissionRegistrationRequest instance
+        :return: One or more umu.message.PermissionRegistrationRequest instances
         """
         return self.request[ticket]
 
@@ -36,9 +37,11 @@ class Permission(object):
         :return: A dictionary of tickets and requests
         """
         res = {}
-        for _tick, req in self.request.items():
-            if resource_set_id == req['resource_set_id']:
-                res[_tick] = req
+        for _tick, req_list in self.request.items():
+            for req in req_list:
+                if resource_set_id == req['resource_set_id']:
+                    res[_tick] = req
+                    break
         return res
 
     def del_request(self, ticket):
@@ -47,6 +50,24 @@ class Permission(object):
         :param ticket: The ticket returned when the request was registered
         """
         del self.request[ticket]
+
+    def get_resource_set_id_list_from_request(self, ticket):
+        try:
+            return [rsd['resource_set_id'] for rsd in self.request[ticket]]
+        except KeyError:
+            return None
+
+
+class Permission(object):
+    def __init__(self):
+        self.db = {}
+
+    def init_owner(self, owner):
+        self.db[owner] = {
+            "permit": {},
+            "accepted": {},
+            "permitted_at": {}
+        }
 
     def set_permit(self, owner, requestor, resource_id, scopes=None):
         if owner not in self.db:
@@ -121,12 +142,6 @@ class Permission(object):
             del self.db[owner]["accepted"][rpt]
 
         return _remove
-
-    def get_resource_set_id_from_request(self, ticket):
-        try:
-            return self.request[ticket]["resource_set_id"]
-        except KeyError:
-            return None
 
     def get_rsid_permits(self, owner, requestor):
         """

@@ -1,3 +1,4 @@
+import json
 import time
 
 from oic.oic import ProviderConfigurationResponse
@@ -117,23 +118,25 @@ for lid, _desc in res_set_desc:
     assert res.status == "201 Created"
 
     # The resource server should keep a map between resource and AS (_rev,_id)
-    ro_map[lid] = {'_id': sr['_id'], 'resource_set_desc': _desc}
-    ressrv.rsid2rsd[sr['_id']] = RESOURCE_OWNER, lid
+    rsid = sr['_id']
+    ro_map[lid] = {'_id': rsid, 'resource_set_desc': _desc}
+    ressrv.rsid2rsd[rsid] = RESOURCE_OWNER, lid
+    ressrv.lid_rsid[lid] = rsid
 
 # ============================== 3 ===========================================
 # The requestore wants to access some information
 # pick up resource sets to work with
-res_set = authzsrv.resource_sets_by_user(RESOURCE_OWNER,
-                                         ressrv.client.client_id)
 
-# Just pick one resource set id
-rsid = res_set[0]['_id']
+res_set = ressrv.dataset.query2permission_registration_request_primer(
+    "GET", "linda", "attr=sn&attr=givenName")
 
+pre_rpp = [(ressrv.lid_rsid[lid], scopes) for lid,scopes in res_set]
 REQUESTOR = "alice"
 
-# set a permission such that the request below succeeds
+# set permissions such that the request below succeeds
 owner = safe_name(RESOURCE_OWNER, client.client_id)
-authzsrv.permit.set_permit(owner, REQUESTOR, rsid, ressrv.dataset.scopes)
+for rsid, scopes in pre_rpp:
+    authzsrv.permit.set_permit(owner, REQUESTOR, rsid, scopes)
 
 # The client does a first attempt at getting information from the RS
 # (not shown here) but without a RPT it only gets information about where
@@ -141,10 +144,12 @@ authzsrv.permit.set_permit(owner, REQUESTOR, rsid, ressrv.dataset.scopes)
 
 # The RS on the other hand registers the necessary permission at the AS
 
-prr = PermissionRegistrationRequest(resource_set_id=rsid,
-                                    scopes=ressrv.dataset.scopes)
+prrs = []
+for rsid, scopes in pre_rpp:
+    prrs.append(PermissionRegistrationRequest(resource_set_id=rsid,
+                                              scopes=scopes).to_dict())
 
-resp = authzsrv.permission_registration_endpoint(prr.to_json(),
+resp = authzsrv.permission_registration_endpoint(json.dumps(prrs),
                                                  'Bearer {}'.format(pat))
 
 assert resp.status == "201 Created"
