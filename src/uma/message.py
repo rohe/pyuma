@@ -79,6 +79,7 @@ class ResourceSetDescription(Message):
         "icon_uri": SINGLE_OPTIONAL_STRING,
         "scopes": REQUIRED_LIST_OF_STRINGS,
         "type": SINGLE_OPTIONAL_STRING,
+        "uri": SINGLE_OPTIONAL_STRING
     }
 
 
