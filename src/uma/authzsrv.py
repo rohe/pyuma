@@ -40,7 +40,7 @@ from uma.permission import Permission
 
 from oic.utils.time_util import utc_time_sans_frac
 from oic.oauth2.provider import endpoint_ava
-from src.uma.permission import PermissionRequests
+from uma.permission import PermissionRequests
 
 __author__ = 'rolandh'
 
