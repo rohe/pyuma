@@ -42,7 +42,7 @@ class RESTIDMWrap(DBWrap):
         if parent is not None:
             try:
                 self.child_lid[parent].append(_id)
-            except:
+            except KeyError:
                 self.child_lid[parent] = [_id]
         return _id, _rsd
 
@@ -59,7 +59,7 @@ class RESTIDMWrap(DBWrap):
         rss = []
         for key, val in self.db[user].items():
             _parent, _rsd = self._register(user, key, scopes=scopes)
-            #rss.append((_parent, _rsd))   -  Not needed
+            # rss.append((_parent, _rsd))   -  Not needed
 
             if isinstance(val, list):
                 for v in val:
