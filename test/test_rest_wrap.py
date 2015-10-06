@@ -1,5 +1,5 @@
 import pytest
-from uma.rest_wrap import RESTIDMWarp
+from uma.rest_wrap import RESTIDMWrap
 
 __author__ = 'roland'
 
@@ -26,7 +26,7 @@ USERDB = {
 class TestRESTIDWrap(object):
     @pytest.fixture(autouse=True)
     def create_wrap(self):
-        self.riw = RESTIDMWarp(USERDB, baseurl="https://restidm.example.com")
+        self.riw = RESTIDMWrap(USERDB, baseurl="https://restidm.example.com")
 
     def test_build_resource_set_descriptions(self):
         rss = self.riw.build_resource_set_descriptions({"user":"linda"})

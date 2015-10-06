@@ -21,7 +21,7 @@ def operation2scope(operation):
     return OP2SCOPE[operation]
 
 
-class RESTIDMWarp(DBWrap):
+class RESTIDMWrap(DBWrap):
     def __init__(self, db, **kwargs):
         DBWrap.__init__(self, db, list(OP2SCOPE.values()), **kwargs)
         self.base_url = kwargs["baseurl"]
