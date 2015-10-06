@@ -571,6 +571,9 @@ class ResourceServer1C(ResourceServerBase, Client):
         wf = WebFinger(httpd=PBase(ca_certs=self.ca_certs))
         return wf.discovery_query(resource)
 
+    # ========================================================================
+    # Below is the client API methods
+    # ========================================================================
     @staticmethod
     def filter_by_permission(intro, scope=None):
         """
@@ -629,3 +632,27 @@ class ResourceServer1C(ResourceServerBase, Client):
                     res[part[1]] = [part[2]]
 
         return res
+
+    def resource_endpoint(self, operation, path, auth=None, query=None):
+        """
+        This is where the client sends its requests.
+        Assumes a HTTP interface.
+
+        Three possible cases:
+        - No RPT
+        - A RPT that doesn't give the necessary access
+        - A valid RPT
+
+        :param auth: Authentication information, HTTP Authorization header
+        :param operation: A HTTP operation: "GET","POST", ...
+        :param path: The URL path
+        :param query: A possible URL query part
+        :return: HTTP response
+        """
+
+        if auth is None:  # no RPT
+            rssp = self.dataset.query2permission_registration_request_primer(
+                operation, path, query)
+
+
+        return Response

@@ -15,7 +15,7 @@ USERDB = {
     "linda": {
         "displayName": "Linda Lindgren",
         "eduPersonNickname": "Linda",
-        "givenName": "Linda",
+        "givenName": ["Linda", "Maria"],
         "sn": "Lindgren",
         "email": "linda@example.com",
         "uid": "linda"
@@ -31,18 +31,18 @@ class TestRESTIDWrap(object):
     def test_build_resource_set_descriptions(self):
         rss = self.riw.build_resource_set_descriptions({"user":"linda"})
         print(rss)
-        assert len(rss) == 6
+        assert len(rss) == 7
 
     def test_query2local_id(self):
-        rss = self.riw.build_resource_set_descriptions({"user":"linda"})
+        _ = self.riw.build_resource_set_descriptions({"user":"linda"})
         lids = self.riw.query2local_id("linda", "attr=displayName")
 
         print(lids)
         assert lids == ['linda:displayName:Linda Lindgren']
 
     def test_query2permission_registration_request_primer(self):
-        rss = self.riw.build_resource_set_descriptions({"user":"linda"})
+        _ = self.riw.build_resource_set_descriptions({"user":"linda"})
         prim = self.riw.query2permission_registration_request_primer(
-            "GET", "linda", "attr=displayName&attr=sn")
+            "GET", "linda", "attr=displayName&attr=sn&attr=givenName")
 
-        assert prim
+        assert len(prim) == 4
