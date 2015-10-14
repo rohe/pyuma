@@ -33,6 +33,10 @@ class TestRESTIDWrap(object):
         print(rss)
         assert len(rss) == 7
 
+    def test_build_resource_set_descriptions_from_subset_of_attributes(self):
+        rss = self.riw.build_resource_set_descriptions({"user":"linda"}, attributes=["givenName", "email"])
+        assert len(rss) == 3
+
     def test_query2local_id(self):
         _ = self.riw.build_resource_set_descriptions({"user":"linda"})
         lids = self.riw.query2local_id("linda", "attr=displayName")
