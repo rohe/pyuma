@@ -1,3 +1,4 @@
 pymongo==2.5.1
 oic==0.7.1
 pyjwkest==0.6.1
+ldap3==0.9.9.1

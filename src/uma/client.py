@@ -9,7 +9,8 @@ from oic.oauth2.message import AuthorizationRequest
 from oic.oauth2 import dynreg
 from oic.oic.message import ProviderConfigurationResponse
 from oic.utils.authn.authn_context import PASSWORD
-from uma.message import AuthorizationDataRequest, ResourceSetDescription
+from uma.message import AuthorizationDataRequest, ResourceSetDescription, \
+    ResourceSetResponse
 from uma.message import IntrospectionRequest
 from uma.message import PermissionRegistrationRequest
 from uma.message import ProviderConfiguration
@@ -23,7 +24,7 @@ from oic.oic import AuthorizationResponse, PARAMMAP
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.http_util import Response
 from oic.utils.http_util import Redirect
-#from oic.utils.http_util import R2C
+# from oic.utils.http_util import R2C
 
 from uma import UMAError
 from uma.message import PermissionRegistrationResponse
@@ -50,7 +51,7 @@ DEF_SIGN_ALG = {"id_token": "RS256",
 class Client(dynreg.Client):
     """ An UMA client implementation based on OAuth2 with Dyn Reg.
     """
-    #noinspection PyUnusedLocal
+    # noinspection PyUnusedLocal
     def __init__(self, client_id=None, ca_certs=None, client_prefs=None,
                  client_authn_methods=None, keyjar=None,
                  server_info=None, authz_page="", flow_type="", password=None,
@@ -90,7 +91,7 @@ class Client(dynreg.Client):
             "IntrospectionRequest": "introspection_endpoint",
             "ResourceSetDescription": "resource_set_registration_endpoint",
             "PermissionRegistrationRequest": "permission_registration_endpoint",
-            #"AuthorizationDataRequest": "authorization_data_request_endpoint",
+            # "AuthorizationDataRequest": "authorization_data_request_endpoint",
             "RPTRequest": "rpt_endpoint"
         })
 
@@ -140,10 +141,7 @@ class Client(dynreg.Client):
 
         self.init_relationship(resource_server)
 
-        if userid not in self.token:
-            self.token[userid] = {}
-            token_type = "AAT"  # The first one I must have
-        elif token_type == "RPT" and not "AAT" in self.token[userid]:
+        if token_type == "RPT" and not "AAT" in self.token:
             # Must have AAT first
             resp = self.acquire_grant(resource_server, "AAT", userid, state,
                                       acr, authn_method, **kwargs)
@@ -221,7 +219,7 @@ class Client(dynreg.Client):
                                               state=aresp["state"],
                                               keyjar=self.keyjar)
 
-        #if not uid:
+        # if not uid:
         #    uid = atresp["id_token"]["sub"]
 
         try:
@@ -281,8 +279,8 @@ class Client(dynreg.Client):
         return self.construct_request(request, request_args, extra_args)
 
     def construct_ResourceSetDescription(self, request=ResourceSetDescription,
-                                  request_args=None, extra_args=None,
-                                  **kwargs):
+                                         request_args=None, extra_args=None,
+                                         **kwargs):
         return self.construct_request(request, request_args, extra_args)
 
     def uma_match_preferences(self, pcr=None, issuer=None):
@@ -429,4 +427,3 @@ class UMAClient():
                 if key == "sign":
                     resp[key] = DEF_SIGN_ALG["id_token"]
         return resp
-

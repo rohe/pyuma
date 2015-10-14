@@ -37,3 +37,18 @@ class DBWrap(object):
     @staticmethod
     def get_necessary_scope(environ):
         return
+
+    def get(self, *args):
+        """
+        Works for hierarchical data, dictionaries of dictionaries.
+        Turtles all the way down.
+
+        """
+        _info = self.db
+        for arg in args:
+            _info = _info[arg]
+
+        return _info
+
+    def query2permission_registration_request_primer(self, *args):
+        pass

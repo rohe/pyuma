@@ -3,7 +3,6 @@ from uma.rest_wrap import RESTIDMWarp
 
 __author__ = 'roland'
 
-
 USERDB = {
     "hans": {
         "displayName": "Hans Granberg",
@@ -29,7 +28,7 @@ class TestRESTIDWrap(object):
         self.riw = RESTIDMWarp(USERDB, baseurl="https://restidm.example.com")
 
     def test_build_resource_set_descriptions(self):
-        rss = self.riw.build_resource_set_descriptions({"user":"linda"})
+        rss = self.riw.build_resource_set_descriptions({"user": "linda"})
         print(rss)
         assert len(rss) == 7
 
@@ -38,14 +37,14 @@ class TestRESTIDWrap(object):
         assert len(rss) == 3
 
     def test_query2local_id(self):
-        _ = self.riw.build_resource_set_descriptions({"user":"linda"})
+        _ = self.riw.build_resource_set_descriptions({"user": "linda"})
         lids = self.riw.query2local_id("linda", "attr=displayName")
 
         print(lids)
         assert lids == ['linda:displayName:Linda Lindgren']
 
     def test_query2permission_registration_request_primer(self):
-        _ = self.riw.build_resource_set_descriptions({"user":"linda"})
+        _ = self.riw.build_resource_set_descriptions({"user": "linda"})
         prim = self.riw.query2permission_registration_request_primer(
             "GET", "linda", "attr=displayName&attr=sn&attr=givenName")
 
