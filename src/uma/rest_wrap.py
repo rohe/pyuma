@@ -21,7 +21,7 @@ def operation2scope(operation):
     return OP2SCOPE[operation]
 
 
-class RESTIDMWarp(DBWrap):
+class RESTIDMWrap(DBWrap):
     def __init__(self, db, **kwargs):
         DBWrap.__init__(self, db, list(OP2SCOPE.values()), **kwargs)
         self.base_url = kwargs["baseurl"]
@@ -42,7 +42,7 @@ class RESTIDMWarp(DBWrap):
         if parent is not None:
             try:
                 self.child_lid[parent].append(_id)
-            except:
+            except KeyError:
                 self.child_lid[parent] = [_id]
         return _id, _rsd
 
@@ -59,7 +59,7 @@ class RESTIDMWarp(DBWrap):
         rss = []
         for key, val in self.db[user].items():
             _parent, _rsd = self._register(user, key, scopes=scopes)
-            #rss.append((_parent, _rsd))   -  Not needed
+            # rss.append((_parent, _rsd))   -  Not needed
 
             if isinstance(val, list):
                 for v in val:

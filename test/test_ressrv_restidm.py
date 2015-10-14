@@ -2,7 +2,7 @@ from oic.utils.authn.client import ClientSecretBasic, BearerHeader
 import pytest
 from uma import PAT
 from uma.resourcesrv import ResourceServer1C
-from uma.rest_wrap import RESTIDMWarp
+from uma.rest_wrap import RESTIDMWrap
 
 __author__ = 'roland'
 
@@ -49,7 +49,7 @@ CONFIG = {
 class TestRessrvRESTIDMWrap(object):
     @pytest.fixture(autouse=True)
     def create_wrap(self):
-        dataset = RESTIDMWarp(USERDB, baseurl='https://rest_idm.example.com')
+        dataset = RESTIDMWrap(USERDB, baseurl='https://rest_idm.example.com')
         res_srv = ResourceServer1C(dataset, **CONFIG)
 
     # filter_by_permission(intro, scope=None)
