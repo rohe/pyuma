@@ -24,9 +24,8 @@ class ResourceSetHandler(object):
             return "{}/resource_set".format(
                 self.client.provider_info["resource_set_registration_endpoint"])
 
-    def com_args(self, request, method, request_args, extra_args, http_args,
-                 rsid,
-                 **kwargs):
+    def com_args(self, request, method, request_args, auth, extra_args=None,
+                 http_args=None, rsid="", **kwargs):
 
         endpoint = self._url(rsid)
 
@@ -40,6 +39,9 @@ class ResourceSetHandler(object):
             http_args = ht_args
         else:
             http_args.update(http_args)
+
+        if auth:
+            http_args["headers"]["Authorization"] = auth
 
         return {"url": url, "body": body, "http_args": http_args, "csi": csi}
 
@@ -108,34 +110,40 @@ class ResourceSetHandler(object):
 
     def create_resource_set_description(self, request=ResourceSetDescription,
                                         body_type="json", method="POST",
-                                        request_args=None, extra_args=None,
-                                        http_args=None,
+                                        auth="", request_args=None,
+                                        extra_args=None, http_args=None,
                                         response_cls=ResourceSetResponse,
                                         **kwargs):
 
-        _kwargs = self.com_args(request, method, request_args,
-                                extra_args, http_args, **kwargs)
+        _kwargs = self.com_args(request, method, request_args, auth,
+                                extra_args, http_args,
+                                content_type='json', **kwargs)
 
         return self.client.request_and_return(response_cls, method, body_type,
                                               **_kwargs)
 
-    def register_resource_set_description(self, info_filter=None):
+    def _register_init(self, info_filter=None, scopes=None):
         if info_filter is None:
-            info_filter = {"user": self.resource_owner}
+            info_filter = {"prim": self.resource_owner}
         else:
-            info_filter.update({"user": self.resource_owner})
+            info_filter.update({"prim": self.resource_owner})
+
+        if not scopes:
+            scopes = list(self.dataset.scopes2op.keys())
 
         res_set_desc = self.dataset.build_resource_set_descriptions(
-            info_filter, self.dataset.scopes)
+            scopes=scopes, **info_filter)
 
         request_args = {"access_token": self.token["PAT"]}
         ht_args = self.client.client_authn_method[
             "bearer_header"](self).construct({}, request_args=request_args)
 
         authn = ht_args["headers"]["Authorization"]
+        return authn, res_set_desc
 
-        ro_map = self.rsd_map[self.resource_owner]
-        for lid, _desc in res_set_desc:
+    def register_resource_set_description(self, info_filter=None, scopes=None):
+        authn, res_set_desc = self._register_init(info_filter, scopes)
+        for lid, _desc in res_set_desc.items():
             res = self.create_resource_set_description(authn=authn,
                                                        request_args=_desc)
             sr = StatusResponse().from_json(res.message)
@@ -144,7 +152,7 @@ class ResourceSetHandler(object):
             # The resource server should keep a map between resource and AS (
             # _rev,_id)
             rsid = sr['_id']
-            ro_map[lid] = {'_id': rsid, 'resource_set_desc': _desc}
+            self.rsd_map[lid] = {'_id': rsid, 'resource_set_desc': _desc}
             self.rsid2lid[rsid] = lid
 
     def get_info(self, *args):
@@ -154,4 +162,3 @@ class ResourceSetHandler(object):
                                                      query):
         return self.dataset.query2permission_registration_request_primer(
             operation, path, query)
-
