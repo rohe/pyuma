@@ -1,7 +1,7 @@
+from oic.utils.time_util import utc_time_sans_frac
 from uma.message import ResourceSetResponse
 from uma.message import ResourceSetDescription
 from uma.message import StatusResponse
-from src.uma.authzsrv import RSR_PATH
 
 __author__ = 'roland'
 
@@ -125,7 +125,8 @@ class ResourceSetHandler(object):
         else:
             info_filter.update({"user": self.resource_owner})
 
-        res_set_desc = self.dataset.build_resource_set_descriptions(info_filter)
+        res_set_desc = self.dataset.build_resource_set_descriptions(
+            info_filter, self.dataset.scopes)
 
         request_args = {"access_token": self.token["PAT"]}
         ht_args = self.client.client_authn_method[
@@ -153,3 +154,4 @@ class ResourceSetHandler(object):
                                                      query):
         return self.dataset.query2permission_registration_request_primer(
             operation, path, query)
+

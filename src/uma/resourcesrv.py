@@ -1,20 +1,15 @@
 import logging
-import traceback
 
 from six.moves.urllib.parse import urlencode
 
-from oic.oauth2.util import JSON_ENCODED
 from oic.oauth2.provider import Endpoint
 from oic.utils import http_util
 from oic.utils.http_util import Response
 from oic.utils.time_util import utc_time_sans_frac
 from uma.client import Client
 from uma.message import IntrospectionRequest
-from uma.message import ResourceSetResponse
 from uma.message import IntrospectionResponse
-from uma.message import ResourceSetDescription
-from uma.message import StatusResponse
-from src.uma.authzsrv import RSR_PATH
+from uma.resourceset import ResourceSetHandler
 
 logger = logging.getLogger(__name__)
 
@@ -29,64 +24,26 @@ class UnknownAuthzSrv(Exception):
     pass
 
 
-def client_init(ca_certs, client_authn_method, config):
-    _client = Client(ca_certs=ca_certs,
-                     client_authn_methods=client_authn_method)
-    for param in ["client_id", "client_secret", "redirect_uris",
-                  "authorization_endpoint", "token_endpoint",
-                  "token_revocation_endpoint"]:
-        try:
-            setattr(_client, param, config[param])
-        except KeyError:
-            pass
+# def client_init(ca_certs, client_authn_method, config):
+#     _client = Client(ca_certs=ca_certs,
+#                      client_authn_methods=client_authn_method)
+#     for param in ["client_id", "client_secret", "redirect_uris",
+#                   "authorization_endpoint", "token_endpoint",
+#                   "token_revocation_endpoint"]:
+#         try:
+#             setattr(_client, param, config[param])
+#         except KeyError:
+#             pass
+#
+#     return _client
 
-    return _client
-
-
-class PermissionRegistry(object):
-    """
-    A database over what resource set descriptions the server has registered
-    """
-
-    def __init__(self):
-        self.db = {}
-
-    def set(self, owner, key, value):
-        try:
-            self.db[owner][key] = value
-        except KeyError:
-            self.db[owner] = {key: value}
-
-    def get(self, owner, item):
-        try:
-            return self.db[owner][item]
-        except KeyError:
-            if owner not in self.db:
-                raise Unknown(owner)
-            else:
-                raise
-
-    def add_resource_set_description(self, owner, item):
-        try:
-            self.db[owner]["resource_set"] = [item]
-        except KeyError:
-            self.db[owner] = {"resource_set": [item]}
-
-    def get_resource_set_description(self, owner, name):
-        for rsd in self.db[owner]["resource_set"]:
-            if rsd["name"] == name:
-                return rsd
-
-        return None
-
-
-REQUEST2ENDPOINT = {
-    "IntrospectionRequest": "introspection_endpoint",
-    "ResourceSetDescription": "resource_set_registration_endpoint",
-    "PermissionRegistrationRequest": "permission_registration_endpoint",
-}
-
-DEFAULT_METHOD = "POST"
+# REQUEST2ENDPOINT = {
+#     "IntrospectionRequest": "introspection_endpoint",
+#     "ResourceSetDescription": "resource_set_registration_endpoint",
+#     "PermissionRegistrationRequest": "permission_registration_endpoint",
+# }
+#
+# DEFAULT_METHOD = "POST"
 
 
 def create_query(srv, uid, attr=None):
@@ -105,10 +62,8 @@ def parse_query(path):
     return path[6:].replace("--", "@")
 
 
-class DataSetEndpoint(Endpoint):
-    etype = "dataset_endpoint"
-
-
+class ResourceEndpoint(Endpoint):
+    etype = "resource_endpoint"
 
 
 class ResourceServer():
@@ -131,15 +86,15 @@ class ResourceServer():
         self.rsd_map = {}
         self.pat = None
 
-    def rs_request_info(self, owner, msgtype, method=DEFAULT_METHOD,
-                        authn_method="bearer_header", request_args=None,
-                        extra_args=None):
-
-        return self.client.request_info(msgtype, method,
-                                        request_args=request_args,
-                                        extra_args=extra_args,
-                                        authn_method=authn_method,
-                                        content_type=JSON_ENCODED)
+    # def rs_request_info(self, msgtype, method=DEFAULT_METHOD,
+    #                     authn_method="bearer_header", request_args=None,
+    #                     extra_args=None):
+    #
+    #     return self.client.request_info(msgtype, method,
+    #                                     request_args=request_args,
+    #                                     extra_args=extra_args,
+    #                                     authn_method=authn_method,
+    #                                     content_type=JSON_ENCODED)
 
     @staticmethod
     def _get_bearer_token(authz):
@@ -277,3 +232,4 @@ class ResourceServer():
             self.do_introspection(rpt)
 
         return Response
+
