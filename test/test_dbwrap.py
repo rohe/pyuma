@@ -22,6 +22,7 @@ USERDB = {
     }
 }
 
+
 class TestDictDBWrap(object):
     @pytest.fixture(autouse=True)
     def create_db(self):
@@ -40,7 +41,7 @@ class TestDictDBWrap(object):
     def test_update_resource_set_description_no_change(self):
         _ = self.dw.build_resource_set_descriptions("hans")
         diff = self.dw.update_resource_set_description('hans')
-        assert diff == {"delete": [], "add": {}, "update":{}}
+        assert diff == {"delete": [], "add": {}, "update": {}}
 
     def test_update_resource_set_description_av_add(self):
         _ = self.dw.build_resource_set_descriptions("hans")
@@ -56,6 +57,9 @@ class TestDictDBWrap(object):
         _ = self.dw.build_resource_set_descriptions("hans")
         self.dw.delete('hans')
         diff = self.dw.update_resource_set_description('hans')
-        assert diff["delete"] == []
+        assert diff["delete"] == [
+            'hans:eduPersonNickname:Hasse', 'hans:displayName:Hans Granberg',
+            'hans:middleName:pippi', 'hans:givenName:Hans', 'hans:sn:Granberg',
+            'hans:email:hans@example.org']
         assert diff["update"] == {}
         assert diff["add"] == {}

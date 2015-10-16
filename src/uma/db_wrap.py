@@ -81,8 +81,13 @@ class DictDBWrap(DBWrap):
         return {_id: _rsd}
 
     def _resource_set_descriptions(self, prim, sec=None, scopes=None):
+        try:
+            ava = self.db[prim]
+        except KeyError:
+            return {}
+
         rsd = {}
-        for key, val in self.db[prim].items():
+        for key, val in ava.items():
             if sec and key not in sec:
                 continue  # skip this attribute
 
@@ -134,13 +139,13 @@ class DictDBWrap(DBWrap):
                     res["update"].update({key: new_val})
 
         for key in del_key:
-            del rsd[key]
+            del orig_rsd[key]
 
         for key, val in rsd.items():
             if key not in orig_rsd:
                 res['add'].update({key: val})
 
-        self.rsd_set[(prim, sec)] = rsd
+        self.rsd_set[(prim, sec)] = orig_rsd
         return res
 
     def resource_name(self, path):
