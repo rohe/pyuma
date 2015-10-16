@@ -73,5 +73,8 @@ class TestDictDBWrap(object):
     def test_get(self):
         self.dw.update('hans', USERDB["hans"])
         ava = self.dw.get('hans')
+        assert _eq(list(ava.keys()),
+                   ['sn', 'displayName', 'eduPersonNickname', 'email',
+                    'middleName', 'givenName'])
         va = self.dw.get('hans', 'sn')
         assert va == 'Granberg'
