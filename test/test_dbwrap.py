@@ -23,10 +23,14 @@ USERDB = {
 }
 
 
+def _eq(l1, l2):
+    return set(l1) == set(l2)
+
+
 class TestDictDBWrap(object):
     @pytest.fixture(autouse=True)
     def create_db(self):
-        self.dw = DictDBWrap(USERDB)
+        self.dw = DictDBWrap(USERDB.copy())
         self.dw.scopes2op["https://dirg.org.umu.se/uma/read"] = self.dw.get
 
     def test_build_resource_set_descriptions(self):
@@ -43,7 +47,7 @@ class TestDictDBWrap(object):
         diff = self.dw.update_resource_set_description('hans')
         assert diff == {"delete": [], "add": {}, "update": {}}
 
-    def test_update_resource_set_description_av_add(self):
+    def test_update_resource_set_description_ava_add(self):
         _ = self.dw.build_resource_set_descriptions("hans")
         self.dw.update('hans', {"middleName": "pippi"})
         diff = self.dw.update_resource_set_description('hans')
@@ -57,9 +61,17 @@ class TestDictDBWrap(object):
         _ = self.dw.build_resource_set_descriptions("hans")
         self.dw.delete('hans')
         diff = self.dw.update_resource_set_description('hans')
-        assert diff["delete"] == [
-            'hans:eduPersonNickname:Hasse', 'hans:displayName:Hans Granberg',
-            'hans:middleName:pippi', 'hans:givenName:Hans', 'hans:sn:Granberg',
-            'hans:email:hans@example.org']
+        assert _eq(diff["delete"],
+                   ['hans:eduPersonNickname:Hasse',
+                    'hans:displayName:Hans Granberg',
+                    'hans:middleName:pippi', 'hans:givenName:Hans',
+                    'hans:sn:Granberg',
+                    'hans:email:hans@example.org'])
         assert diff["update"] == {}
         assert diff["add"] == {}
+
+    def test_get(self):
+        self.dw.update('hans', USERDB["hans"])
+        ava = self.dw.get('hans')
+        va = self.dw.get('hans', 'sn')
+        assert va == 'Granberg'

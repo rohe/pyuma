@@ -72,8 +72,8 @@ class DictDBWrap(DBWrap):
             scopes = list(self.scopes2op.keys())
 
         _rsd = ResourceSetDescription(scopes=scopes, name=name)
-        self.lid2scopes[_id] = scopes
         if parent is not None:
+            self.lid2scopes[_id] = scopes
             try:
                 self.child_lid[parent].append(_id)
             except:
@@ -140,12 +140,17 @@ class DictDBWrap(DBWrap):
 
         for key in del_key:
             del orig_rsd[key]
+            del self.lid2scopes[key]
 
         for key, val in rsd.items():
             if key not in orig_rsd:
                 res['add'].update({key: val})
 
-        self.rsd_set[(prim, sec)] = orig_rsd
+        if orig_rsd == {}:
+            del self.rsd_set[(prim, sec)]
+        else:
+            self.rsd_set[(prim, sec)] = orig_rsd
+
         return res
 
     def resource_name(self, path):
@@ -176,7 +181,10 @@ class DictDBWrap(DBWrap):
         del self.db[key]
 
     def update(self, key, ava):
-        self.db[key].update(ava)
+        try:
+            self.db[key].update(ava)
+        except KeyError:
+            self.db[key] = ava
 
     def query2permission_registration_request_primer(self, *args):
         pass
