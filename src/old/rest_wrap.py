@@ -46,21 +46,23 @@ class RESTIDMWrap(DBWrap):
                 self.child_lid[parent] = [_id]
         return _id, _rsd
 
-    def build_resource_set_descriptions(self, filter, scopes=None):
+    def build_resource_set_descriptions(self, filter, scopes=None, attributes=None):
         """
         Will return a list of ResourceSetDescriptions covering all
         resource sets.
 
         :param filter: A filter description as a dictionary
         :param scopes: List of scopes that can by applied to this resource
+        :param attributes: List of which attributes to build ResourceSetDescription's for
         :return: list of tuples of local id and ResourceSetDescription instances
         """
         user = filter["user"]
         rss = []
         for key, val in self.db[user].items():
-            _parent, _rsd = self._register(user, key, scopes=scopes)
-            # rss.append((_parent, _rsd))   -  Not needed
+            if attributes and key not in attributes:
+                continue # skip this attribute
 
+            _parent, _rsd = self._register(user, key, scopes=scopes)
             if isinstance(val, list):
                 for v in val:
                     rss.append(self._register(user, key, v, scopes, _parent))

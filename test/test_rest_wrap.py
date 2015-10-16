@@ -1,7 +1,8 @@
 import pytest
-from uma.rest_wrap import RESTIDMWrap
+from uma.rest_wrap import RESTIDMWarp
 
 __author__ = 'roland'
+
 
 USERDB = {
     "hans": {
@@ -25,22 +26,26 @@ USERDB = {
 class TestRESTIDWrap(object):
     @pytest.fixture(autouse=True)
     def create_wrap(self):
-        self.riw = RESTIDMWrap(USERDB, baseurl="https://restidm.example.com")
+        self.riw = RESTIDMWarp(USERDB, baseurl="https://restidm.example.com")
 
     def test_build_resource_set_descriptions(self):
         rss = self.riw.build_resource_set_descriptions({"user": "linda"})
         print(rss)
         assert len(rss) == 7
 
+    def test_build_resource_set_descriptions_from_subset_of_attributes(self):
+        rss = self.riw.build_resource_set_descriptions({"user":"linda"}, attributes=["givenName", "email"])
+        assert len(rss) == 3
+
     def test_query2local_id(self):
-        rss = self.riw.build_resource_set_descriptions({"user": "linda"})
+        _ = self.riw.build_resource_set_descriptions({"user": "linda"})
         lids = self.riw.query2local_id("linda", "attr=displayName")
 
         print(lids)
         assert lids == ['linda:displayName:Linda Lindgren']
 
     def test_query2permission_registration_request_primer(self):
-        rss = self.riw.build_resource_set_descriptions({"user": "linda"})
+        _ = self.riw.build_resource_set_descriptions({"user": "linda"})
         prim = self.riw.query2permission_registration_request_primer(
             "GET", "linda", "attr=displayName&attr=sn&attr=givenName")
 
