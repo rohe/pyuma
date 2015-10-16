@@ -40,17 +40,16 @@ class TestResourceSetHandler(object):
 
     def test_register_init(self):
         self.rsh.token["PAT"] = 'pat'
-        auth, res_set_desc = self.rsh.register_init()
-        assert auth == 'Bearer pat'
+        res_set_desc = self.rsh.register_init()
         assert len(res_set_desc) == 5
 
     def test_create_rsd(self):
         self.rsh.token["PAT"] = 'pat'
-        auth, res_set_desc = self.rsh.register_init()
+        res_set_desc = self.rsh.register_init()
         # http_args = {'headers': {'Authorization': auth}}
         for lid, _desc in res_set_desc.items():
             res = self.rsh.com_args(ResourceSetDescription, "POST",
-                                    request_args=_desc, auth=auth,
+                                    request_args=_desc,
                                     content_type=JSON_ENCODED)
             assert res["url"] == 'https://as.example.com/rsr/resource_set'
             assert res["http_args"] == {
@@ -59,6 +58,6 @@ class TestResourceSetHandler(object):
 
     def test_other_args(self):
         self.rsh.token["PAT"] = 'pat'
-        args = self.rsh.other_args("123456")
+        args = self.rsh.first_args("123456")
         assert args["url"] == 'https://as.example.com/rsr/resource_set/123456'
         assert args["http_args"] == {'headers': {'Authorization': 'Bearer pat'}}

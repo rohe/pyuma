@@ -72,7 +72,7 @@ class ResourceSetHandler(object):
             http_args.update(http_args)
 
         try:
-            http_args["headers"].update(_args["https_args"])
+            http_args["headers"].update(_args["http_args"]["headers"])
         except KeyError:
             pass
 
