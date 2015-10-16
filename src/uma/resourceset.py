@@ -1,9 +1,25 @@
-from oic.utils.time_util import utc_time_sans_frac
+import logging
+from oic.oauth2 import SUCCESSFUL
+from uma import UMAError
 from uma.message import ResourceSetResponse
 from uma.message import ResourceSetDescription
 from uma.message import StatusResponse
 
 __author__ = 'roland'
+
+logger = logging.getLogger(__name__)
+
+
+class ServerError(Exception):
+    pass
+
+
+class OtherError(Exception):
+    pass
+
+
+class ServiceError(UMAError):
+    pass
 
 
 class ResourceSetHandler(object):
@@ -24,15 +40,30 @@ class ResourceSetHandler(object):
             return "{}/resource_set".format(
                 self.client.provider_info["resource_set_registration_endpoint"])
 
-    def com_args(self, request, method, request_args, auth, extra_args=None,
+    def get_authn(self):
+        request_args = {"access_token": self.token["PAT"]}
+        ht_args = self.client.client_authn_method[
+            "bearer_header"](self).construct({}, request_args=request_args)
+
+        return ht_args["headers"]["Authorization"]
+
+    def first_args(self, rsid=""):
+        """
+        Used by read, delete and list
+        """
+        return {
+            "url": self._url(rsid),
+            "http_args": {"headers": {"Authorization": self.get_authn()}}}
+
+    def com_args(self, request, method, request_args, extra_args=None,
                  http_args=None, rsid="", **kwargs):
 
-        endpoint = self._url(rsid)
+        _args = self.first_args(rsid)
 
         url, body, ht_args, csi = self.client.request_info(request, method,
                                                            request_args,
                                                            extra_args,
-                                                           endpoint=endpoint,
+                                                           endpoint=_args['url'],
                                                            **kwargs)
 
         if http_args is None:
@@ -40,28 +71,47 @@ class ResourceSetHandler(object):
         else:
             http_args.update(http_args)
 
-        if auth:
-            http_args["headers"]["Authorization"] = auth
+        try:
+            http_args["headers"].update(_args["https_args"])
+        except KeyError:
+            pass
 
         return {"url": url, "body": body, "http_args": http_args, "csi": csi}
 
-    def read_resource_set_description(self, request=ResourceSetDescription,
-                                      body_type="", method="GET",
-                                      request_args=None, extra_args=None,
-                                      http_args=None, rsid="",
-                                      response_cls=ResourceSetResponse,
-                                      **kwargs):
+    def read_resource_set_description(self, rsid="",
+                                      response_cls=ResourceSetResponse):
         """
         Reads a resource set description from the Authorization server
 
         :returns: A ResourceSetDescription instance
         """
+        _kwargs = self.first_args(rsid)
 
-        _kwargs = self.com_args(request, method, request_args,
-                                extra_args, http_args, rsid, **kwargs)
-
-        return self.client.request_and_return(response_cls, method, body_type,
+        return self.client.request_and_return(response_cls, method="GET",
                                               **_kwargs)
+
+    def wrap_request(self, method, **kwargs):
+
+        try:
+            reqresp = self.client.http_request(method=method, **kwargs)
+        except Exception:
+            raise
+
+        if reqresp.status_code in SUCCESSFUL:
+            return reqresp.text
+        # elif reqresp.status_code == 302:  # Do I handle redirect ? or
+        #     pass
+        elif reqresp.status_code == 500:
+            logger.error("(%d) %s" % (reqresp.status_code, reqresp.text))
+            raise ServerError("Server ERROR: Something went wrong: {}".format(
+                reqresp.text))
+        elif reqresp.status_code in [400, 401]:
+            raise ServiceError("Service ERROR: Something went wrong: {}".format(
+                reqresp.text))
+        else:
+            logger.error("(%d) %s" % (reqresp.status_code, reqresp.text))
+            raise OtherError("HTTP ERROR: %s [%s] on %s" % (
+                reqresp.text, reqresp.status_code, reqresp.url))
 
     def delete_resource_set_description(self, rsid):
         """
@@ -70,10 +120,17 @@ class ResourceSetHandler(object):
         :param rsid:
         :returns: True if successful
         """
+        _kwargs = self.first_args(rsid)
 
-        resp = self.client.http_request(self._url(rsid), "DELETE")
+        try:
+            resp = self.client.http_request(method="DELETE", **_kwargs)
+        except Exception:
+            raise
 
-        return True
+        if resp.status == "200":
+            return True
+        else:
+            return False
 
     def update_resource_set_description(self, request=ResourceSetDescription,
                                         body_type="json", method="PUT",
@@ -102,50 +159,51 @@ class ResourceSetHandler(object):
         :returns: List of ResourceSetDescription instance
         """
 
-        resp = self.client.http_request(self._url(), "GET")
-        return []
+        _kwargs = self.first_args()
+
+        return self.client.http_request(method="GET", **_kwargs)
 
     def is_resource_set_changed(self, rsid, val):
         pass
 
     def create_resource_set_description(self, request=ResourceSetDescription,
                                         body_type="json", method="POST",
-                                        auth="", request_args=None,
+                                        request_args=None,
                                         extra_args=None, http_args=None,
                                         response_cls=ResourceSetResponse,
                                         **kwargs):
 
-        _kwargs = self.com_args(request, method, request_args, auth,
+        _kwargs = self.com_args(request, method, request_args,
                                 extra_args, http_args,
                                 content_type='json', **kwargs)
 
         return self.client.request_and_return(response_cls, method, body_type,
                                               **_kwargs)
 
-    def _register_init(self, info_filter=None, scopes=None):
+    def register_init(self, info_filter=None, scopes=None):
+        """
+
+        """
         if info_filter is None:
             info_filter = {"prim": self.resource_owner}
         else:
             info_filter.update({"prim": self.resource_owner})
 
-        if not scopes:
-            scopes = list(self.dataset.scopes2op.keys())
+        if info_filter == {}:
+            res_set_desc = {}
+        else:
+            if not scopes:
+                scopes = list(self.dataset.scopes2op.keys())
 
-        res_set_desc = self.dataset.build_resource_set_descriptions(
-            scopes=scopes, **info_filter)
+            res_set_desc = self.dataset.build_resource_set_descriptions(
+                scopes=scopes, **info_filter)
 
-        request_args = {"access_token": self.token["PAT"]}
-        ht_args = self.client.client_authn_method[
-            "bearer_header"](self).construct({}, request_args=request_args)
-
-        authn = ht_args["headers"]["Authorization"]
-        return authn, res_set_desc
+        return res_set_desc
 
     def register_resource_set_description(self, info_filter=None, scopes=None):
-        authn, res_set_desc = self._register_init(info_filter, scopes)
+        res_set_desc = self.register_init(info_filter, scopes)
         for lid, _desc in res_set_desc.items():
-            res = self.create_resource_set_description(authn=authn,
-                                                       request_args=_desc)
+            res = self.create_resource_set_description(request_args=_desc)
             sr = StatusResponse().from_json(res.message)
             assert res.status == "201 Created"
 
