@@ -1,5 +1,6 @@
 import json
 import socket
+from urllib.parse import urlparse, parse_qs
 from mako.lookup import TemplateLookup
 from oic.utils.authn.authn_context import AuthnBroker
 from oic.utils.authn.client import verify_client
@@ -10,6 +11,7 @@ from oic.utils.keyio import keyjar_init
 from oic.utils.sdb import SessionDB
 from oic.utils.userinfo import UserInfo
 from uma import authzsrv
+from uma.authzsrv import OidcDynRegUmaAS
 
 __author__ = 'roland'
 
@@ -20,20 +22,29 @@ AUTHZSRV = None
 PASSWD = {
     "linda": "krall",
     "hans": "thetake",
+    "user": "howes",
+    "https://sp.example.org/": "code"
 }
 
-USER_DB = {
+
+USERDB = {
     "hans": {
         "name": "Hans Granberg",
+        "nickname": "Hasse",
+        "email": "hans@example.org",
+        "verified": False,
         "sub": "hans.granberg@example.org"
     },
     "linda": {
         "name": "Linda Lindgren",
+        "nickname": "Linda",
+        "email": "linda@example.com",
+        "verified": True,
         "sub": "linda.lindgren@example.com"
     }
 }
 
-USERINFO = UserInfo(USER_DB)
+USERINFO = UserInfo(USERDB)
 
 KEYS = [
     {"type": "RSA", "key": "as.key", "use": ["enc", "sig"]},
@@ -63,8 +74,72 @@ LOOKUP = TemplateLookup(directories=[ROOT + 'templates', ROOT + 'htdocs'],
                         module_directory=ROOT + 'modules',
                         input_encoding='utf-8', output_encoding='utf-8')
 
-# init the AS
 
+class Response():
+    def __init__(self, base=None):
+        self.status_code = 200
+        if base:
+            for key, val in base.items():
+                self.__setitem__(key, val)
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+
+    def __getitem__(self, item):
+        return getattr(self, item)
+
+
+ENDPOINT = {
+    "authorization_endpoint": "/authorization",
+    "token_endpoint": "/token",
+    "user_info_endpoint": "/userinfo",
+    "check_session_endpoint": "/check_session",
+    "refresh_session_endpoint": "/refresh_session",
+    "end_session_endpoint": "/end_session",
+    "registration_endpoint": "/registration",
+    "discovery_endpoint": "/discovery",
+    "register_endpoint": "/register",
+    "dynamic_client_endpoint": '/dynreg'
+}
+
+
+class FakeUmaAs(OidcDynRegUmaAS):
+    def http_request(self, path, method, **kwargs):
+        part = urlparse(path)
+        path = part[2]
+        query = part[4]
+        self.host = "%s://%s" % (part.scheme, part.netloc)
+
+        response = Response
+        response.status_code = 500
+        response.text = ""
+
+        if path == ENDPOINT["authorization_endpoint"]:
+            assert method == "GET"
+            response = self.authorization_endpoint(query)
+        elif path == ENDPOINT["token_endpoint"]:
+            assert method == "POST"
+            response = self.token_endpoint(kwargs["data"])
+        elif path == ENDPOINT["dynamic_client_endpoint"]:
+            if method == "POST":
+                response = self.oauth_registration_endpoint(kwargs["data"])
+        elif path == ENDPOINT["registration_endpoint"]:
+            if method == "POST":
+                response = self.oidc_registration_endpoint(kwargs["data"])
+        elif path == "/.well-known/webfinger":
+            assert method == "GET"
+            qdict = parse_qs(query)
+            response.status_code = 200
+            response.text = self.srv["oidc"].webfinger.response(
+                qdict["resource"][0], "%s/" % self.hostname)
+        elif path == "/.well-known/openid-configuration":
+            assert method == "GET"
+            response = self.srv["oidc"].openid_conf()
+
+        return response
+
+
+# init the AS
 
 def main(base, cookie_handler):
     as_conf = {
@@ -92,14 +167,9 @@ def main(base, cookie_handler):
     base_url = "http://%s" % socket.gethostname()
     ab = AuthnBroker()
     ab.add("linda", DummyAuthn(None, "linda"))
-    #AB.add("hans", DummyAuthn(None, "hans.granberg@example.org"))
-    ab.add("UserPwd",
-           UsernamePasswordMako(None, "login2.mako", LOOKUP, PASSWD,
-                                "%s/authorization" % base),
-           10, base_url)
-    ab.add("BasicAuthn", BasicAuthnExtra(None, PASSWD), 10, base_url)
+    ab.add("hans", DummyAuthn(None, "hans"))
 
-    AUTHZSRV = authzsrv.OidcDynRegUmaAS(
+    AUTHZSRV = FakeUmaAs(
         base, SessionDB(base_url), CDB, ab, USERINFO, AUTHZ,
         verify_client, "1234567890", keyjar=None, configuration=as_conf,
         base_url=base)
@@ -112,3 +182,8 @@ def main(base, cookie_handler):
     fp.close()
 
     return AUTHZSRV
+
+
+
+
+

@@ -37,14 +37,13 @@ class TestResourceSetHandler(object):
             'https://dirg.org.umu.se/uma/read'] = self.rsh.dataset.get
         self.rsh.client.provider_info = {
             "resource_set_registration_endpoint": 'https://as.example.com/rsr'}
+        self.rsh.token["PAT"] = 'pat'
 
     def test_register_init(self):
-        self.rsh.token["PAT"] = 'pat'
         res_set_desc = self.rsh.register_init()
         assert len(res_set_desc) == 5
 
     def test_create_rsd(self):
-        self.rsh.token["PAT"] = 'pat'
         res_set_desc = self.rsh.register_init()
         # http_args = {'headers': {'Authorization': auth}}
         for lid, _desc in res_set_desc.items():
@@ -56,8 +55,25 @@ class TestResourceSetHandler(object):
                 'headers': {'Content-Type': 'application/json',
                             'Authorization': 'Bearer pat'}}
 
-    def test_other_args(self):
-        self.rsh.token["PAT"] = 'pat'
+    def test_first_args(self):
+        # Used by read and delete
         args = self.rsh.first_args("123456")
         assert args["url"] == 'https://as.example.com/rsr/resource_set/123456'
         assert args["http_args"] == {'headers': {'Authorization': 'Bearer pat'}}
+
+        # used by list
+        args = self.rsh.first_args()
+        assert args["url"] == 'https://as.example.com/rsr/resource_set'
+        assert args["http_args"] == {'headers': {'Authorization': 'Bearer pat'}}
+
+    def test_update_rsd(self):
+        res_set_desc = self.rsh.register_init()
+        _desc = res_set_desc[list(res_set_desc)[0]]
+        res = self.rsh.com_args(ResourceSetDescription, "POST",
+                                request_args=_desc, rsid="foo",
+                                content_type=JSON_ENCODED)
+        assert res["url"] == 'https://as.example.com/rsr/resource_set/foo'
+        assert res["http_args"] == {
+            'headers': {'Content-Type': 'application/json',
+                        'Authorization': 'Bearer pat'}}
+

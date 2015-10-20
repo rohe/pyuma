@@ -1,118 +1,119 @@
 import json
-import time
+from urllib.parse import urlparse
 from jwkest import b64e_enc_dec
-
-from oic.oic import ProviderConfigurationResponse
-from oic.oic import AuthorizationRequest
+from oic.oauth2.util import JSON_ENCODED
 from oic.oic import RegistrationResponse
+from oic.oic import AuthorizationRequest
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.http_util import CookieDealer
 from oic.utils.sdb import AuthnEvent
+import time
+from uma import PAT
+from uma.authzsrv import safe_name
+from uma.db_wrap import DictDBWrap
+from uma.message import ProviderConfiguration, RPTRequest, RQP_CLAIMS_GRANT_TYPE, \
+    ClaimToken, RPTResponse, IntrospectionRequest, IntrospectionResponse
+from uma.message import PermissionRegistrationRequest
+from uma.message import PermissionRegistrationResponse
+from uma.message import ResourceSetDescription
+from uma.message import StatusResponse
+from uma.resourcesrv import ResourceServer
 
 import uma_as
-from uma.client import Client
-from uma.authzsrv import RSR_PATH, safe_name
-from uma.message import OIDCProviderConfiguration, RQP_CLAIMS_GRANT_TYPE, \
-    RPTRequest, ClaimToken
-from uma.message import AuthorizationDataRequest
-from uma.message import IntrospectionResponse
-from uma.message import IntrospectionRequest
-from uma.message import RPTResponse
-from uma.message import PermissionRegistrationResponse
-from uma.message import StatusResponse
-from uma.message import PermissionRegistrationRequest
-from uma.message import ProviderConfiguration
 from uma.userinfo import UMAUserInfo
 
-import idm_rs
+__author__ = 'roland'
 
+# AS init
 AS_PORT = 8088
-BASE = "https://localhost:%s" % AS_PORT
+AS_BASE = "https://localhost:%s" % AS_PORT
 AS_CookieHandler = CookieDealer(None)
 
-authzsrv = uma_as.main(BASE, AS_CookieHandler)
+authzsrv = uma_as.main(AS_BASE, AS_CookieHandler)
+
+# RS init
+
+USERDB = {
+    "hans": {
+        "displayName": "Hans Granberg",
+        "givenName": "Hans",
+        "sn": "Granberg",
+        "eduPersonNickname": "Hasse",
+        "email": "hans@example.org",
+    },
+    "linda": {
+        "displayName": "Linda Lindgren",
+        "eduPersonNickname": "Linda",
+        "givenName": ["Linda", "Maria"],
+        "sn": "Lindgren",
+        "email": "linda@example.com",
+        "uid": "linda"
+    }
+}
+
+dataset = DictDBWrap(USERDB.copy())
+dataset.scopes2op['https://www.example.com/uma/read'] = dataset.get
+info_store = {}
 
 RS_PORT = 8089
 RS_HOST = "https://localhost:%s" % RS_PORT
-RS_CookieHandler = CookieDealer(None)
-ressrv = idm_rs.main(RS_HOST, RS_CookieHandler)
+ressrv = ResourceServer(dataset, "linda", info_store,
+                        client_authn_methods=CLIENT_AUTHN_METHOD)
 
-print("go!")
+ressrv.rs_handler.op2scope['GET'] = 'https://www.example.com/uma/read'
 
 # ============================== 1 ===========================================
-# teach the RS about what the AS can do and where (=endpoints)
+# Connect RS to AS
 
-opc = OIDCProviderConfiguration()
-resp = authzsrv.oidc_providerinfo_endpoint()
-oidc_pcr = ProviderConfigurationResponse().from_json(resp.message)
+# ressrv.client.dynamic(AS_BASE)
 
-client = Client(
-    {},
-    client_authn_methods=CLIENT_AUTHN_METHOD)
+# load the UMA AS provider configuration
+resp = authzsrv.uma_providerinfo_endpoint()
+uma_pcr = ProviderConfiguration().from_json(resp.message)
+ressrv.client.handle_provider_config(uma_pcr, authzsrv.baseurl, False, True)
 
-ressrv.baseurl = RS_HOST
-callback = "%s/%s" % (ressrv.baseurl, "key")
-client.redirect_uris = [callback]
+callback = "%s/%s" % (RS_HOST, "auth_cb")
 
 _me = {"application_type": "web", "application_name": "umaclient",
        "contacts": ["ops@example.com"], "redirect_uris": [callback]}
 
-# link to the client that will talk to the AS
-RESSRV_CLI_KEY = "abcdefghijklmn"
-ressrv.oidc_client = client
-ressrv.client = client
-
-# load the AS provider configuration
-# first the OIDC side of the AS
-client.handle_provider_config(oidc_pcr, authzsrv.baseurl, False, True)
-opc.update(oidc_pcr)
-
-# Then the UMA specific parts
-resp = authzsrv.uma_providerinfo_endpoint()
-uma_pcr = ProviderConfiguration().from_json(resp.message)
-opc.update(uma_pcr)
-client.handle_provider_config(uma_pcr, authzsrv.baseurl, False, True)
-
-client.provider_info = opc
+ressrv.client.redirect_uris = [callback]
 
 # Register the RS as a client to the AS, this is OAuth2 dynreg registration
-reg_info = client.construct_RegistrationRequest(request_args=_me)
-reg_resp = authzsrv.oidc_registration_endpoint(reg_info.to_json())
+reg_info = ressrv.client.construct_RegistrationRequest(request_args=_me)
+reg_resp = authzsrv.oauth_registration_endpoint(reg_info.to_json())
 regresp = RegistrationResponse().from_json(reg_resp.message)
 
-client.store_registration_info(regresp)
+ressrv.client.store_registration_info(regresp)
 
 # Get the PAT, should normally be a login and token request
 RESOURCE_OWNER = "linda"
 identity = {"uid": RESOURCE_OWNER}
-areq = AuthorizationRequest(client_id=regresp["client_id"])
+areq = AuthorizationRequest(client_id=regresp["client_id"],
+                            scope=[PAT])
 # Authentication happens by magic :-)
-authn_event = AuthnEvent(RESOURCE_OWNER, identity.get('salt', ''),
+authn_event = AuthnEvent(RESOURCE_OWNER, 'salt',
                          authn_info="UserPassword",
                          time_stamp=int(time.time()))
 sid = authzsrv.sdb.create_authz_session(authn_event, areq)
 grant = authzsrv.sdb[sid]["code"]
 _dict = authzsrv.sdb.upgrade_to_token(grant)
-# pat = _dict["access_token"]
-ressrv.authz_registration(RESOURCE_OWNER, _dict, opc["issuer"], RESSRV_CLI_KEY)
+ressrv.rs_handler.token['PAT'] = _dict["access_token"]
 
 # ============================== 2 ===========================================
 # create resource set descriptions and register them.
-res_set_desc = ressrv.dataset.build_resource_set_descriptions(
-    {"user": RESOURCE_OWNER})
-ressrv.rsd_map[RESOURCE_OWNER] = {}
+# ressrv.rs_handler.register_resource_set_description({'prim': RESOURCE_OWNER})
 
-# Let the description be consumed by the AS
-pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
-request_args = {"access_token": pat}
-ht_args = client.client_authn_method[
-    "bearer_header"](ressrv).construct({}, request_args=request_args)
+res_set_desc = ressrv.rs_handler.dataset.build_resource_set_descriptions(
+    RESOURCE_OWNER)
 
-authn = ht_args["headers"]["Authorization"]
-
-ro_map = ressrv.rsd_map[RESOURCE_OWNER]
-for lid, _desc in res_set_desc:
-    res = authzsrv.resource_set_registration_endpoint(path=RSR_PATH,
+for lid, _desc in res_set_desc.items():
+    arg = ressrv.rs_handler.com_args(ResourceSetDescription, "POST",
+                                     request_args=_desc,
+                                     content_type=JSON_ENCODED)
+    authn = arg['http_args']['headers']['Authorization']
+    parts = urlparse(arg['url'])
+    res = authzsrv.resource_set_registration_endpoint(path=parts.path,
                                                       method="POST",
                                                       authn=authn,
                                                       body=_desc.to_json())
@@ -121,24 +122,28 @@ for lid, _desc in res_set_desc:
 
     # The resource server should keep a map between resource and AS (_rev,_id)
     rsid = sr['_id']
-    ro_map[lid] = {'_id': rsid, 'resource_set_desc': _desc}
-    ressrv.rsid2rsd[rsid] = RESOURCE_OWNER, lid
-    ressrv.lid_rsid[lid] = rsid
+    ressrv.rs_handler.rsd_map[lid] = {'_id': rsid, 'resource_set_desc': _desc}
+    ressrv.rs_handler.rsid2lid[rsid] = lid
 
 # ============================== 3 ===========================================
-# The requestore wants to access some information
-# pick up resource sets to work with
+# The client does a first attempt at getting information from the RS
+# but without a RPT it only gets information about where the AS is and a ticket.
 
-res_set = ressrv.dataset.query2permission_registration_request_primer(
+# The RS on its side registers the necessary permission at the AS
+# Assume a HTTP GET with the path+query = linda?attr=sn&attr=givenName
+
+res_set = ressrv.rs_handler.query2permission_registration_request_primer(
     "GET", "linda", "attr=sn&attr=givenName")
 
-pre_rpp = [(ressrv.lid_rsid[lid], scopes) for lid, scopes in res_set]
-REQUESTOR = "alice"
+pre_rpp = [(ressrv.rs_handler.rsd_map[lid]['_id'], [scope]) for lid, scope in res_set]
+REQUESTOR = RESOURCE_OWNER
 
+# -----------------------------------------------------------------------------
 # set permissions such that the request below succeeds
-owner = safe_name(RESOURCE_OWNER, client.client_id)
+owner = safe_name(RESOURCE_OWNER, ressrv.client.client_id)
 for rsid, scopes in pre_rpp:
     authzsrv.permit.set_permit(owner, REQUESTOR, rsid, scopes)
+# -----------------------------------------------------------------------------
 
 # The client does a first attempt at getting information from the RS
 # (not shown here) but without a RPT it only gets information about where
@@ -151,6 +156,7 @@ for rsid, scopes in pre_rpp:
     prrs.append(PermissionRegistrationRequest(resource_set_id=rsid,
                                               scopes=scopes).to_dict())
 
+pat = ressrv.rs_handler.token['PAT']
 resp = authzsrv.permission_registration_endpoint(json.dumps(prrs),
                                                  'Bearer {}'.format(pat))
 
@@ -169,24 +175,13 @@ UMA_CLIENT = UMAUserInfo(CLI_BASE, ["%s/authz_cb" % CLI_BASE],
 
 _uma_client = UMA_CLIENT.client
 
-# Gather AS info, both OIDC OP and UMA AS info
-opc = OIDCProviderConfiguration()
-
-# oidc_pcr comes from (1)
-_uma_client.handle_provider_config(oidc_pcr, authzsrv.baseurl, False, True)
-opc.update(oidc_pcr)
-
-# likewise with uma_pcr
+# uma_pcr same as in (1)
 _uma_client.handle_provider_config(uma_pcr, authzsrv.baseurl, False, True)
-opc.update(uma_pcr)
-
-_uma_client.provider_info[opc["issuer"]] = opc
 
 # register at the AS
 reg_info = _uma_client.construct_RegistrationRequest(
     request_args=_uma_client.registration_info)
 reg_resp = authzsrv.oauth_registration_endpoint(reg_info.to_json())
-
 reginfo = RegistrationResponse().from_json(reg_resp.message)
 _uma_client.store_registration_info(reginfo)
 
@@ -196,8 +191,9 @@ _uma_client.store_registration_info(reginfo)
 # as authentication and the ticket received in (3).
 
 authn = "Basic {}".format(
-    b64e_enc_dec("{}:{}".format(client.client_id, client.client_secret),
-                 "ascii", "ascii"))
+    b64e_enc_dec(
+        "{}:{}".format(_uma_client.client_id, _uma_client.client_secret),
+        "ascii", "ascii"))
 
 rqp_claims = b64e_enc_dec(json.dumps({"uid": REQUESTOR}), "utf-8", "ascii")
 
@@ -210,10 +206,9 @@ rtr = RPTResponse().from_json(resp.message)
 _uma_client.token[REQUESTOR] = {}
 _uma_client.token[REQUESTOR]["RPT"] = rtr["rpt"]
 
-
 # Introspection of the RPT
 
-pat = ressrv.permreg.get(RESOURCE_OWNER, "pat")["access_token"]
+pat = ressrv.rs_handler.token['PAT']
 _rpt = _uma_client.token[REQUESTOR]["RPT"]
 ir = IntrospectionRequest(token=_rpt)
 
@@ -229,6 +224,6 @@ iresp = IntrospectionResponse().from_json(resp.message)
 assert iresp["active"] is True
 assert "permissions" in iresp
 
-res = ressrv.collect_info(iresp, 'https://dirg.org.umu.se/uma/get')
+res = ressrv.collect_info(iresp, ressrv.rs_handler.op2scope['GET'])
 
 print(res)

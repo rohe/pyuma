@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import socket
@@ -15,7 +16,7 @@ from oic.oauth2 import rndstr
 from oic.oauth2 import dynreg
 from oic.oauth2.provider import Endpoint
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
-from oic.utils.authn.user import ToOld
+from oic.utils.authn.user import ToOld, FailedAuthentication
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import NotFound
 from oic.utils.http_util import NoContent
@@ -23,24 +24,27 @@ from oic.utils.http_util import Created
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import Response
 from oic.utils.keyio import KeyJar
+from oic.utils.time_util import utc_time_sans_frac
+from oic.oauth2.provider import endpoint_ava
 # from uma.authzdb import AuthzDB
 
 from uma.client import UMA_SCOPE
-from uma.message import IntrospectionRequest, AuthorizationDataResponse
+from uma.message import IntrospectionRequest
+from uma.message import AuthorizationDataResponse
+from uma.message import RPTRequest
 from uma.message import ErrorResponse
 from uma.message import AuthzDescription
 from uma.message import AuthorizationDataRequest
 from uma.message import IntrospectionResponse
 from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
+from uma.message import RQP_CLAIMS_GRANT_TYPE
 # from uma.resource_set import ResourceSetDB
 from uma.resource_set import MemResourceSetDB
 from uma.resource_set import UnknownObject
 from uma.permission import Permission
-
-from oic.utils.time_util import utc_time_sans_frac
-from oic.oauth2.provider import endpoint_ava
 from uma.permission import PermissionRequests
+
 
 __author__ = 'rolandh'
 
@@ -971,3 +975,43 @@ class OidcDynRegUmaAS(UmaAS):
     def client_info_endpoint(self, request, environ, method, query):
         _srv = self.srv["dyn_reg"]
         return _srv.client_info_endpoint(request, environ, method, query)
+
+    def rpt_token_endpoint(self, authn, request):
+        areq = RPTRequest().deserialize(request, "json")
+
+        try:
+            client_id = self.srv["oauth"].client_authn(self.srv["oauth"], areq,
+                                                       authn)
+        except FailedAuthentication as err:
+            err = TokenErrorResponse(error="unauthorized_client",
+                                     error_description="%s" % err)
+            return Response(err.to_json(), content="application/json",
+                            status="401 Unauthorized")
+
+        try:
+            assert areq["grant_type"] == RQP_CLAIMS_GRANT_TYPE
+        except AssertionError:
+            err = TokenErrorResponse(error="invalid_request",
+                                     error_description="Wrong grant type")
+            return Response(err.to_json(), content="application/json",
+                            status="401 Unauthorized")
+
+        requesting_party_uid = ""
+        for rqp_claims in areq["claim_tokens"]:
+            if rqp_claims["format"] == "json":
+                claims = json.loads(
+                    base64.urlsafe_b64decode(
+                        rqp_claims["token"].encode("ascii")).decode("utf-8"))
+                if "uid" in claims:
+                    requesting_party_uid = claims["uid"]
+                    break
+
+        if not requesting_party_uid:
+            err = TokenErrorResponse(
+                error="invalid_request",
+                error_description="No requesting party uid provided")
+            return Response(err.to_json(), content="application/json",
+                            status="401 Unauthorized")
+
+        return self.rpt_endpoint_(requesting_party_uid, client_id,
+                                  request=request)

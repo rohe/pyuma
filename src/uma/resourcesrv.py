@@ -24,28 +24,6 @@ class UnknownAuthzSrv(Exception):
     pass
 
 
-# def client_init(ca_certs, client_authn_method, config):
-#     _client = Client(ca_certs=ca_certs,
-#                      client_authn_methods=client_authn_method)
-#     for param in ["client_id", "client_secret", "redirect_uris",
-#                   "authorization_endpoint", "token_endpoint",
-#                   "token_revocation_endpoint"]:
-#         try:
-#             setattr(_client, param, config[param])
-#         except KeyError:
-#             pass
-#
-#     return _client
-
-# REQUEST2ENDPOINT = {
-#     "IntrospectionRequest": "introspection_endpoint",
-#     "ResourceSetDescription": "resource_set_registration_endpoint",
-#     "PermissionRegistrationRequest": "permission_registration_endpoint",
-# }
-#
-# DEFAULT_METHOD = "POST"
-
-
 def create_query(srv, uid, attr=None):
     url = "%s/info/%s" % (srv, uid)
     if attr:
@@ -66,18 +44,22 @@ class ResourceEndpoint(Endpoint):
     etype = "resource_endpoint"
 
 
-class ResourceServer():
-    def __init__(self, dataset, resource_owner, symkey="", client_id=None,
-                 ca_certs=None, client_authn_methods=None, keyjar=None,
-                 server_info=None, authz_page="", flow_type="", password=None,
-                 registration_info=None, response_type="", scope="",
-                 **kwargs):
-        self.client = Client.__init__(client_id, ca_certs, client_authn_methods,
-                                      keyjar, server_info, authz_page,
-                                      flow_type, password, registration_info,
-                                      response_type, scope)
+class ResourceServer(object):
+    def __init__(self, dataset, resource_owner, info_store, symkey="",
+                 client_id=None, ca_certs=None, client_authn_methods=None,
+                 keyjar=None, server_info=None, authz_page="", flow_type="",
+                 password=None, registration_info=None, response_type="",
+                 scope="", **kwargs):
+        self.client = Client(client_id=client_id, ca_certs=ca_certs,
+                             client_authn_methods=client_authn_methods,
+                             keyjar=keyjar, server_info=server_info,
+                             authz_page=authz_page,
+                             flow_type=flow_type, password=password,
+                             registration_info=registration_info,
+                             response_type=response_type, scope=scope)
         self.rs_handler = ResourceSetHandler(dataset, self.client,
                                              resource_owner)
+        self.info_store = info_store
         self.symkey = symkey
         self.kwargs = kwargs
         self.srv_discovery_url = ""
@@ -232,4 +214,3 @@ class ResourceServer():
             self.do_introspection(rpt)
 
         return Response
-

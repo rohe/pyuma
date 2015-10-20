@@ -186,5 +186,10 @@ class DictDBWrap(DBWrap):
         except KeyError:
             self.db[key] = ava
 
-    def query2permission_registration_request_primer(self, *args):
-        pass
+    def query2permission_registration_request_primer(self, ro, scope, attrs):
+        res = []
+        for attr in attrs:
+            for l in self.child_lid[_local_id(ro, attr)]:
+                if scope in self.lid2scopes[l]:
+                    res.append((l, scope))
+        return res

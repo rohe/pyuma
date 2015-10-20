@@ -20,7 +20,7 @@ from uma import AAT
 from uma import PAT
 from uma.message import RPTRequest
 
-from oic.oic import AuthorizationResponse, PARAMMAP
+from oic.oic import AuthorizationResponse, PARAMMAP, OIDCONF_PATTERN
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.http_util import Response
 from oic.utils.http_util import Redirect
@@ -53,7 +53,7 @@ class Client(dynreg.Client):
     """
     # noinspection PyUnusedLocal
     def __init__(self, client_id=None, ca_certs=None, client_prefs=None,
-                 client_authn_methods=None, keyjar=None,
+                 client_authn_methods=None, keyjar=None, conf=None,
                  server_info=None, authz_page="", flow_type="", password=None,
                  registration_info=None, response_type="", scope="",
                  verify_ssl=True):
@@ -75,6 +75,7 @@ class Client(dynreg.Client):
             "require_signed_request_object":
                 DEF_SIGN_ALG["openid_request_object"]}
 
+        self.conf = conf or {}
         self.registration_info = registration_info
         self.flow_type = flow_type
         self.scope = scope
@@ -106,13 +107,13 @@ class Client(dynreg.Client):
             else:
                 opc.update(pcr)
 
-            try:
-                pcr = self.provider_config(provider_url,
-                                           serv_pattern=UMACONF_PATTERN)
-            except Exception as err:
-                raise
-            else:
-                opc.update(pcr)
+            if 'oidc_provider' in self.conf:
+                try:
+                    pcr = self.oidc_client.provider_config(provider_url)
+                except Exception as err:
+                    raise
+                else:
+                    opc.update(pcr)
 
             self.provider_info = opc
 

@@ -1,4 +1,4 @@
-from oic.oauth2 import Message
+from oic.oauth2 import Message, AccessTokenRequest
 from oic.oauth2 import PyoidcError
 from oic.oauth2 import SINGLE_OPTIONAL_INT
 from oic.oauth2 import OPTIONAL_LIST_OF_STRINGS
@@ -32,7 +32,7 @@ class ProviderConfiguration(Message):
         "resource_set_registration_endpoint": SINGLE_REQUIRED_STRING,
         "permission_registration_endpoint": SINGLE_REQUIRED_STRING,
         "rpt_endpoint": SINGLE_REQUIRED_STRING
-        }
+    }
 
 
 class OIDCProviderConfiguration(ProviderConfigurationResponse):
@@ -69,6 +69,7 @@ def msg_list_deser(val, sformat="urlencoded"):
         else:
             pass
     return Message().deserialize(val, sformat)
+
 
 OPTIONAL_MESSAGE = ([Message], False, msg_ser, msg_list_deser, False)
 
@@ -156,6 +157,7 @@ def adesc_ser(inst, sformat, lev=0):
 
     return res
 
+
 OPTIONAL_PERM_LIST = ([AuthzDescription], False, adesc_ser, adesc_deser, False)
 
 
@@ -179,8 +181,30 @@ class PermissionRegistrationResponse(Message):
     c_param = {"ticket": SINGLE_REQUIRED_STRING}
 
 
-class RPTRequest(Message):
-    c_param = {}
+# class RPTRequest(Message):
+#    c_param = {}
+
+
+class ClaimToken(Message):
+    c_param = {
+        "format": SINGLE_REQUIRED_STRING,
+        "token": SINGLE_REQUIRED_STRING,
+    }
+
+
+OPTIONAL_CLAIM_TOKENS_LIST = ([ClaimToken], False, None, None, False)
+
+# Extension grant for client credentials combined with claims about the
+# Requesting Party
+RQP_CLAIMS_GRANT_TYPE = "https://as.example.com/rqp_claims"
+
+
+class RPTRequest(AccessTokenRequest):
+    c_param = {"rpt": SINGLE_OPTIONAL_STRING,
+               "ticket": SINGLE_REQUIRED_STRING,
+               "claim_tokens": OPTIONAL_CLAIM_TOKENS_LIST
+               }
+    c_default = {"grant_type": RQP_CLAIMS_GRANT_TYPE}
 
 
 class RPTResponse(Message):
@@ -213,6 +237,7 @@ class RequestingPartyClaimsRequest(Message):
 class RequestingPartyClaimsResponse(Message):
     c_param = {
     }
+
 
 MSG = {
     "ProviderConfiguration": ProviderConfiguration,

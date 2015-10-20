@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import parse_qs
 from oic.oauth2 import SUCCESSFUL
 from uma import UMAError
 from uma.message import ResourceSetResponse
@@ -30,6 +31,7 @@ class ResourceSetHandler(object):
         self.rsid2lid = {}
         self.resource_owner = resource_owner
         self.token = {}
+        self.op2scope = {}
 
     def _url(self, rsid=""):
         if rsid:
@@ -218,5 +220,7 @@ class ResourceSetHandler(object):
 
     def query2permission_registration_request_primer(self, operation, path,
                                                      query):
+        assert path == self.resource_owner
+        attr = parse_qs(query)["attr"]
         return self.dataset.query2permission_registration_request_primer(
-            operation, path, query)
+            self.resource_owner, self.op2scope[operation], attr)
