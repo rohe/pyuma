@@ -1,6 +1,5 @@
 import json
 import time
-from jwkest import b64e_enc_dec
 
 from oic.oic import ProviderConfigurationResponse
 from oic.oic import AuthorizationRequest
@@ -11,9 +10,9 @@ from oic.utils.sdb import AuthnEvent
 
 import uma_as
 from uma.client import Client
-from uma.authzsrv import RSR_PATH, safe_name
-from uma.message import OIDCProviderConfiguration, RQP_CLAIMS_GRANT_TYPE, \
-    RPTRequest, ClaimToken
+from uma.authz_srv import RSR_PATH
+from uma.authz_srv import safe_name
+from uma.message import OIDCProviderConfiguration
 from uma.message import AuthorizationDataRequest
 from uma.message import IntrospectionResponse
 from uma.message import IntrospectionRequest
@@ -132,7 +131,7 @@ for lid, _desc in res_set_desc:
 res_set = ressrv.dataset.query2permission_registration_request_primer(
     "GET", "linda", "attr=sn&attr=givenName")
 
-pre_rpp = [(ressrv.lid_rsid[lid], scopes) for lid, scopes in res_set]
+pre_rpp = [(ressrv.lid_rsid[lid], scopes) for lid,scopes in res_set]
 REQUESTOR = "alice"
 
 # set permissions such that the request below succeeds
@@ -190,26 +189,35 @@ reg_resp = authzsrv.oauth_registration_endpoint(reg_info.to_json())
 reginfo = RegistrationResponse().from_json(reg_resp.message)
 _uma_client.store_registration_info(reginfo)
 
-# Get a RPT from the AS using the issued client credentials using HTTP Basic
-# auth
-# (OIDC 'client_secret_basic') combined with the user id of the Requesting Party
-# as authentication and the ticket received in (3).
+# Get the AAT, should normally be a login and token request
+_state = "FOO"
+acr = "BasicAuthn"
+request_args = {"response_type": "code",
+                "client_id": regresp["client_id"],
+                "redirect_uri": _uma_client.redirect_uris[0],
+                "scope": [_uma_client.get_uma_scope("AAT"), "openid"],
+                "state": _state,
+                "acr_values": [acr]}
 
-authn = "Basic {}".format(
-    b64e_enc_dec("{}:{}".format(client.client_id, client.client_secret),
-                 "ascii", "ascii"))
+# Fake authentication event
+authn_event = AuthnEvent(REQUESTOR, identity.get('salt', ''),
+                         authn_info="UserPassword",
+                         time_stamp=int(time.time()))
 
-rqp_claims = b64e_enc_dec(json.dumps({"uid": REQUESTOR}), "utf-8", "ascii")
+areq = AuthorizationRequest(**request_args)
+sid = authzsrv.sdb.create_authz_session(authn_event, areq)
+grant = authzsrv.sdb[sid]["code"]
+_uma_client.token[REQUESTOR] = {"AAT": authzsrv.sdb.upgrade_to_token(grant)}
 
-request = RPTRequest(grant_type=RQP_CLAIMS_GRANT_TYPE, ticket=ticket,
-                     claim_tokens=[ClaimToken(format="json", token=rqp_claims)])
+# Get a RPT from the AS using the AAT as authentication and the ticket
+# received in (3).
 
-resp = authzsrv.rpt_token_endpoint(authn=authn, request=request.to_json())
+authn = "Bearer %s" % _uma_client.token[REQUESTOR]["AAT"]["access_token"]
+request = AuthorizationDataRequest(ticket=ticket)
+resp = authzsrv.rpt_endpoint(authn, request=request.to_json())
 
 rtr = RPTResponse().from_json(resp.message)
-_uma_client.token[REQUESTOR] = {}
 _uma_client.token[REQUESTOR]["RPT"] = rtr["rpt"]
-
 
 # Introspection of the RPT
 

@@ -1,15 +1,16 @@
+import json
 import logging
-
-from six.moves.urllib.parse import urlencode
+from urllib.parse import urlencode
 
 from oic.oauth2.provider import Endpoint
 from oic.utils import http_util
 from oic.utils.http_util import Response
 from oic.utils.time_util import utc_time_sans_frac
-from uma.client import Client
 from uma.message import IntrospectionRequest
+from uma.message import PermissionRegistrationRequest
+from uma.message import PermissionRegistrationResponse
 from uma.message import IntrospectionResponse
-from uma.resourceset import ResourceSetHandler
+from uma.resource_set import ResourceSetHandler
 
 logger = logging.getLogger(__name__)
 
@@ -45,38 +46,31 @@ class ResourceEndpoint(Endpoint):
 
 
 class ResourceServer(object):
-    def __init__(self, dataset, resource_owner, info_store, symkey="",
-                 client_id=None, ca_certs=None, client_authn_methods=None,
-                 keyjar=None, server_info=None, authz_page="", flow_type="",
-                 password=None, registration_info=None, response_type="",
-                 scope="", **kwargs):
-        self.client = Client(client_id=client_id, ca_certs=ca_certs,
-                             client_authn_methods=client_authn_methods,
-                             keyjar=keyjar, server_info=server_info,
-                             authz_page=authz_page,
-                             flow_type=flow_type, password=password,
-                             registration_info=registration_info,
-                             response_type=response_type, scope=scope)
+    """
+    One ResourceServer per resource_owner+dataset pair
+    """
+    def __init__(self, dataset, resource_owner, client, symkey="",
+                 **kwargs):
+        # self.client = Client(client_id=client_id, ca_certs=ca_certs,
+        #                      client_authn_methods=client_authn_methods,
+        #                      keyjar=keyjar, server_info=server_info,
+        #                      authz_page=authz_page,
+        #                      flow_type=flow_type, password=password,
+        #                      registration_info=registration_info,
+        #                      response_type=response_type, scope=scope)
+        self.client = client
         self.rs_handler = ResourceSetHandler(dataset, self.client,
                                              resource_owner)
-        self.info_store = info_store
+        self.resource_owner = resource_owner
         self.symkey = symkey
         self.kwargs = kwargs
         self.srv_discovery_url = ""
         self.cookie_handler = http_util.CookieDealer(self)
-        self.cookie_name = "resourceserver"
+        self.cookie_name = "resource_server"
         self.rsd_map = {}
         self.pat = None
-
-    # def rs_request_info(self, msgtype, method=DEFAULT_METHOD,
-    #                     authn_method="bearer_header", request_args=None,
-    #                     extra_args=None):
-    #
-    #     return self.client.request_info(msgtype, method,
-    #                                     request_args=request_args,
-    #                                     extra_args=extra_args,
-    #                                     authn_method=authn_method,
-    #                                     content_type=JSON_ENCODED)
+        self.keyjar = self.client.keyjar
+        self.kid = {"sig": {}, "enc": {}}
 
     @staticmethod
     def _get_bearer_token(authz):
@@ -97,7 +91,7 @@ class ResourceServer(object):
         :returns:
         """
 
-        pat = self.client.token
+        pat = self.client.token[self.resource_owner]['PAT']
         ir = IntrospectionRequest(token=rpt)
 
         # if path:
@@ -127,6 +121,34 @@ class ResourceServer(object):
             "result": result
         }
         return resp(environ, start_response, **argv)
+
+    def create_permission_request(self, operation, uid, query):
+        res_set = self.rs_handler.query2permission_registration_request_primer(
+            operation, uid, query)
+
+        pre_rpp = [(self.rs_handler.rsd_map[lid]['_id'], [scope]) for lid, scope
+                   in res_set]
+
+        prrs = []
+        for rsid, scopes in pre_rpp:
+            prrs.append(PermissionRegistrationRequest(resource_set_id=rsid,
+                                                      scopes=scopes).to_dict())
+
+        return prrs
+
+    def do_permission_request(self, prrs):
+        pat = self.rs_handler.token['PAT']
+
+        kwargs = {
+            "headers": {"Authorization": "Bearer %s" % pat},
+            "body": prrs}
+
+        url = self.client.provider_info["rpt_endpoint"]
+        resp = self.client.send(url, "POST", **kwargs)
+
+        assert resp.status == "201 Created"
+        return PermissionRegistrationResponse().from_json(resp.message)[
+            "ticket"]
 
     @staticmethod
     def filter_by_permission(intro, scope=None):
@@ -210,6 +232,8 @@ class ResourceServer(object):
         if auth is None:  # no RPT
             rssp = self.rs_handler.query2permission_registration_request_primer(
                 operation, path, query)
+            resp = self.client.do_register_permission_request(
+                self.resource_owner, json.dumps(rssp))
         else:
             self.do_introspection(rpt)
 

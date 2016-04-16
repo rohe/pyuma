@@ -1,14 +1,16 @@
-from io import StringIO
 import json
 import os
+from io import StringIO
+
+from oic.oauth2.message import ErrorResponse
 from oic.utils.http_util import Response
+from oic.utils.time_util import epoch_in_a_while
+from oic.utils.time_util import utc_time_sans_frac
+
 from uma.message import IntrospectionResponse
 from uma.message import AuthzDescription
 from uma.json_resource_server import JsonResourceServer
 from uma.json_resource_server import DEF_SCOPES
-from oic.oauth2.message import ErrorResponse
-from oic.utils.time_util import utc_time_sans_frac
-from oic.utils.time_util import epoch_in_a_while
 
 __author__ = 'roland'
 
@@ -159,9 +161,3 @@ def test_get_owner(tmpdir):
     jrs.index["alice"] = 1
     assert jrs.get_owner("info/alice/1") == "alice"
     assert jrs.get_owner("info/public/x") is None
-
-
-
-if __name__ == "__main__":
-    test_alice_add()
-    test_roger_patch()

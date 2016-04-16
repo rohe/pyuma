@@ -1,11 +1,12 @@
-from oic.oauth2 import Message, AccessTokenRequest
+from oic.extension import message
+from oic.oauth2 import AccessTokenRequest
+from oic.oauth2 import Message
 from oic.oauth2 import PyoidcError
 from oic.oauth2 import SINGLE_OPTIONAL_INT
 from oic.oauth2 import OPTIONAL_LIST_OF_STRINGS
 from oic.oauth2 import REQUIRED_LIST_OF_STRINGS
 from oic.oauth2 import SINGLE_REQUIRED_STRING
 from oic.oauth2 import SINGLE_OPTIONAL_STRING
-from oic.oauth2 import dynreg
 from oic.oic.message import msg_ser
 from oic.oic.message import SINGLE_REQUIRED_INT
 from oic.oic.message import SINGLE_OPTIONAL_BOOLEAN
@@ -114,37 +115,40 @@ class IntrospectionRequest(Message):
     }
 
 
-def adesc_deser(val, sformat="urlencoded"):
+def desc_deser(klass, val, sformat="urlencoded"):
     if sformat in ["dict", "json"]:
         if not isinstance(val, str):
             res = []
             if sformat == "dict":
-                for _val in val:
-                    res.append(AuthzDescription().from_dict(_val))
+                if isinstance(val, dict):
+                    return klass().from_dict(val)
+                elif isinstance(val, list):
+                    for _val in val:
+                        res.append(klass().from_dict(_val))
             else:
                 for _val in val:
-                    res.append(AuthzDescription().from_json(_val))
+                    res.append(klass().from_json(_val))
             return res
         else:
             pass
     return Message().deserialize(val, sformat)
 
 
-def adesc_ser(inst, sformat, lev=0):
+def desc_ser(klass, inst, sformat, lev=0):
     if sformat in ["urlencoded", "json"]:
-        if isinstance(inst, dict) or isinstance(inst, AuthzDescription):
+        if isinstance(inst, dict) or isinstance(inst, klass):
             res = inst.serialize(sformat, lev)
         else:
             res = inst
     elif sformat == "dict":
-        if isinstance(inst, AuthzDescription):
+        if isinstance(inst, klass):
             res = inst.serialize(sformat, lev)
         elif isinstance(inst, dict):
             res = inst
         elif isinstance(inst, list):
             res = []
             for item in inst:
-                if isinstance(item, AuthzDescription):
+                if isinstance(item, klass):
                     res.append(item.serialize(sformat, lev))
                 elif isinstance(item, dict):
                     res.append(item)
@@ -156,6 +160,14 @@ def adesc_ser(inst, sformat, lev=0):
         raise PyoidcError("Unknown sformat")
 
     return res
+
+
+def adesc_ser(inst, sformat, lev=0):
+    return desc_ser(AuthzDescription, inst, sformat, lev)
+
+
+def adesc_deser(val, sformat="urlencoded"):
+    return desc_deser(AuthzDescription, val, sformat)
 
 
 OPTIONAL_PERM_LIST = ([AuthzDescription], False, adesc_ser, adesc_deser, False)
@@ -229,14 +241,89 @@ class ErrorResponse(Message):
     }
 
 
-class RequestingPartyClaimsRequest(Message):
+class AuthenticationContext(Message):
+    c_param = {"required_acr": REQUIRED_LIST_OF_STRINGS}
+
+
+class RequiredClaims(Message):
     c_param = {
+        "name": SINGLE_OPTIONAL_STRING,
+        "friendly_name": SINGLE_OPTIONAL_STRING,
+        "claim_type": SINGLE_OPTIONAL_STRING,
+        'claim_token_format': OPTIONAL_LIST_OF_STRINGS,
+        'issuer': OPTIONAL_LIST_OF_STRINGS
     }
 
 
-class RequestingPartyClaimsResponse(Message):
+def reqc_ser(inst, sformat, lev=0):
+    return desc_ser(RequiredClaims, inst, sformat, lev)
+
+
+def reqc_deser(val, sformat):
+    return desc_deser(RequiredClaims, val, sformat)
+
+
+REQUIRED_LIST_OF_REQUIREDCLAIMS = ([RequiredClaims], True, reqc_ser,
+                                   reqc_deser, False)
+
+
+class RequestingPartyClaims(Message):
     c_param = {
+        'required_claims': REQUIRED_LIST_OF_REQUIREDCLAIMS,
+        'redirect_user': SINGLE_OPTIONAL_BOOLEAN,
+        'ticket': SINGLE_OPTIONAL_STRING
     }
+
+
+def ac_ser(inst, sformat, lev=0):
+    return desc_ser(AuthenticationContext, inst, sformat, lev)
+
+
+def ac_deser(val, sformat):
+    return desc_deser(AuthenticationContext, val, sformat)
+
+
+REQUIRED_AUTHENTICATIONCONTEXT = (AuthenticationContext, True, ac_ser,
+                                  ac_deser, False)
+
+
+def rpc_ser(inst, sformat, lev=0):
+    return desc_ser(RequestingPartyClaims, inst, sformat, lev)
+
+
+def rpc_deser(val, sformat):
+    return desc_deser(RequestingPartyClaims, val, sformat)
+
+
+REQUIRED_REQUESTINGPARTYCLAIMS = (RequestingPartyClaims, True, rpc_ser,
+                                  rpc_deser, False)
+
+
+class ErrorDetails(Message):
+    c_param = {
+        'authentication_context': REQUIRED_AUTHENTICATIONCONTEXT,
+        'requesting_party_claims': REQUIRED_REQUESTINGPARTYCLAIMS
+    }
+
+
+class RequestingPartyRedirect(Message):
+    c_param = {
+        'client_id': SINGLE_REQUIRED_STRING,
+        'ticket': SINGLE_REQUIRED_STRING,
+        'claims_redirect_uri': SINGLE_OPTIONAL_STRING,
+        'state': SINGLE_OPTIONAL_STRING
+    }
+
+
+class RequestingPartyResponse(Message):
+    c_param = {
+        'authorization_state': SINGLE_REQUIRED_STRING,
+        'ticket': SINGLE_OPTIONAL_STRING,
+        'state': SINGLE_OPTIONAL_STRING
+    }
+    c_allowed_values = {
+        "authorization_state": ["claims_submitted", 'not_authorized',
+                                'need_info', 'request_submitted']}
 
 
 MSG = {
@@ -252,9 +339,13 @@ MSG = {
     "RPTRequest": RPTRequest,
     "AuthorizationDataRequest": AuthorizationDataRequest,
     "AuthorizationDataResponse": AuthorizationDataResponse,
-    "RequestingPartyClaimsRequest": RequestingPartyClaimsRequest,
-    "RequestingPartyClaimsResponse": RequestingPartyClaimsResponse,
-    "ResourceSetResponse": ResourceSetResponse
+    "AuthenticationContext": AuthenticationContext,
+    "RequestingPartyClaims": RequestingPartyClaims,
+    "ErrorResponse": ErrorResponse,
+    "ErrorDetails": ErrorDetails,
+    "ResourceSetResponse": ResourceSetResponse,
+    'RequestingPartyRedirect': RequestingPartyRedirect,
+    'RequestingPartyResponse': RequestingPartyResponse
 }
 
 
@@ -262,4 +353,4 @@ def factory(msgtype):
     try:
         return MSG[msgtype]
     except KeyError:
-        return dynreg.factory(msgtype)
+        return message.factory(msgtype)

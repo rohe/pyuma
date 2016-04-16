@@ -31,6 +31,7 @@ class ResourceSetHandler(object):
         self.rsid2lid = {}
         self.resource_owner = resource_owner
         self.token = {}
+        # This maps the client API operations to scopes
         self.op2scope = {}
 
     def _url(self, rsid=""):
@@ -157,7 +158,6 @@ class ResourceSetHandler(object):
         """
         List resource set descriptions on an Authorization server
 
-        :param rsid:
         :returns: List of ResourceSetDescription instance
         """
 
@@ -220,7 +220,9 @@ class ResourceSetHandler(object):
 
     def query2permission_registration_request_primer(self, operation, path,
                                                      query):
-        assert path == self.resource_owner
-        attr = parse_qs(query)["attr"]
-        return self.dataset.query2permission_registration_request_primer(
-            self.resource_owner, self.op2scope[operation], attr)
+        if path == self.resource_owner:
+            attr = parse_qs(query)["attr"]
+            return self.dataset.query2permission_registration_request_primer(
+                self.resource_owner, self.op2scope[operation], attr)
+        else:
+            raise ServiceError('path != resource owner')

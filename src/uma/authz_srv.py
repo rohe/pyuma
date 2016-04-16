@@ -5,18 +5,21 @@ import socket
 import traceback
 import sys
 
-from oic.oauth2.dynreg import Provider as OAUTH2Provider
+from oic.extension.provider import Provider as OAUTH2Provider
+
+from oic.oauth2 import MessageException
+from oic.oauth2 import TokenErrorResponse
+from oic.oauth2.provider import Endpoint
+from oic.oauth2.provider import endpoint_ava
+
+from oic.oic import rndstr
 from oic.oic.provider import Provider as OIDCProvider
 from oic.oic.provider import TokenEndpoint
 from oic.oic.provider import AuthorizationEndpoint
 
-from oic.oauth2 import MessageException
-from oic.oauth2 import TokenErrorResponse
-from oic.oauth2 import rndstr
-from oic.oauth2 import dynreg
-from oic.oauth2.provider import Endpoint
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
-from oic.utils.authn.user import ToOld, FailedAuthentication
+from oic.utils.authn.user import FailedAuthentication
+from oic.utils.authn.user import ToOld
 from oic.utils.http_util import BadRequest
 from oic.utils.http_util import NotFound
 from oic.utils.http_util import NoContent
@@ -25,8 +28,6 @@ from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import Response
 from oic.utils.keyio import KeyJar
 from oic.utils.time_util import utc_time_sans_frac
-from oic.oauth2.provider import endpoint_ava
-# from uma.authzdb import AuthzDB
 
 from uma.client import UMA_SCOPE
 from uma.message import IntrospectionRequest
@@ -39,12 +40,10 @@ from uma.message import IntrospectionResponse
 from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
 from uma.message import RQP_CLAIMS_GRANT_TYPE
-# from uma.resource_set import ResourceSetDB
-from uma.resource_set import MemResourceSetDB
-from uma.resource_set import UnknownObject
 from uma.permission import Permission
 from uma.permission import PermissionRequests
-
+from uma.rsdb import MemResourceSetDB
+from uma.rsdb import UnknownObject
 
 __author__ = 'rolandh'
 
@@ -338,7 +337,7 @@ class UmaAS(object):
                 if func == self.resource_set.delete:
                     # As a side effect all permissions assigned that references
                     # this resource set should be deleted
-                    self.permit.delete_permit_by_resource_id(entity, rsid)
+                    self.permit.delete_request_by_resource_id(entity, rsid)
                     response = NoContent()
                 elif func == self.resource_set.create:
                     _etag = self.resource_set.etag[body["_id"]]
@@ -410,37 +409,12 @@ class UmaAS(object):
 
         return res
 
-    # def resource_set_tree_by_rsid(self, owner, rsid):
-    #     rs = self.resource_set.read(owner, rsid)
-    #     _name = rs["name"].split("/")[-1]
-    #     try:
-    #         _rsids = rs["subsets"]
-    #     except KeyError:
-    #         return rsid, _name
-    #     else:
-    #         res = {}
-    #         for _rsid in _rsids:
-    #             _rs = self.resource_set_tree_by_rsid(owner, _rsid)
-    #             try:
-    #                 res.update(_rs)
-    #             except ValueError:
-    #                 try:
-    #                     res.append(_rs)
-    #                 except AttributeError:
-    #                     res = [_rs]
-    #
-    #         return {(rsid, _name): res}
-    #
-    # def resource_set_name(self, rsid):
-    #     rs = self.resource_set.read(self.map_rsid_id[rsid])
-    #     return rs["name"]
-
     def permits_by_user(self, owner):
         """
         :param owner: The owner of the resource
         :return: A dictionary with requestors as keys and permissions as values
         """
-        return self.permit.get_permits(owner)
+        return self.permit.get_accepted(owner)
 
     def authz_session_info(self, token):
         pass
@@ -458,7 +432,7 @@ class UmaAS(object):
         try:
             try:
                 # requestor = self.rpt[ir["token"]]["requestor"]
-                perms = self.permit.get_accepted(owner, ir["token"])
+                perms = self.permit.get_accepted_by_rpt(owner, ir["token"])
             except KeyError:
                 response = BadRequest()
             else:
@@ -595,13 +569,13 @@ class UmaAS(object):
                 res[permit] = _scs
         return res
 
-    def register_permission(self, owner, rpt, rsid, scopes):
+    def register_permission(self, owner, rpt, rsid, scopes, requires=None):
         now = utc_time_sans_frac()
-        perm = AuthzDescription(resource_set_id=rsid, scopes=scopes,
-                                exp=now + self.session.lifetime,
-                                iat=now)
+        authz = AuthzDescription(resource_set_id=rsid, scopes=scopes,
+                                 exp=now + self.session.lifetime,
+                                 iat=now)
 
-        self.permit.set_accepted(owner, rpt, perm)
+        self.permit.set_accepted(owner, rpt, authz, requires)
 
     def rpt_endpoint_(self, entity, client_id, **kwargs):
         """
@@ -646,8 +620,7 @@ class UmaAS(object):
             # that it allows what is requested. Return what is allowed !
 
             try:
-                allow_scopes, timestamp = self.permit.get_permit(owner, entity,
-                                                                 _rsid)
+                _perm = self.permit.get_request(owner, entity, _rsid)
             except KeyError:  #
                 errmsg = ErrorResponse(error="not_authorized",
                                        error_description="No permission given")
@@ -656,7 +629,7 @@ class UmaAS(object):
                 _scopes = []
                 for scope in prr["scopes"]:
                     try:
-                        assert scope in allow_scopes
+                        assert scope in _perm["scopes"]
                     except AssertionError:
                         pass
                     else:
@@ -679,7 +652,7 @@ class UmaAS(object):
         obj = self.resource_set.read(_user, rsid)
         return obj["_id"]
 
-    def remove_permission(self, owner, requestor, resource_name):
+    def remove_permission_request(self, owner, requestor, resource_name):
         """
         :param owner: The resource owner
         :param requestor: The SP entity ID
@@ -688,7 +661,7 @@ class UmaAS(object):
         _id = self.name2id(owner, requestor, resource_name)
 
         try:
-            self.permit.delete_permit(owner, requestor, _id)
+            self.permit.delete_request(owner, requestor, _id)
         except KeyError:
             pass
 
@@ -712,7 +685,7 @@ class UmaAS(object):
 
         logger.info("store: (%s, %s, %s)" % (user, requestor, rsids))
 
-        present = self.permit.get_rsid_permits(user, requestor)
+        present = self.permit.get_rsid_requests(user, requestor)
         _new = [k for k in list(rsids.keys()) if k not in present]
         _user = safe_name(user, requestor)
         for rsid in _new:
@@ -720,14 +693,15 @@ class UmaAS(object):
             if scopes is None:
                 rs = self.resource_set.read(_user, rsid)
                 scopes = rs["scopes"]
-            self.permit.set_permit(user, requestor, rsid, scopes)
+            self.permit.set_request(user, requestor, rsid, scopes)
 
         _rem = [k for k in present if k not in rsids]
         for rsid in _rem:
-            self.permit.delete_permit(user, requestor, rsid)
+            self.permit.delete_request(user, requestor, rsid)
 
     def read_permission(self, user, requestor, rsid):
-        return self.permit.get_permit(user, requestor, rsid)
+        _perms = self.permit.get_request(user, requestor, rsid)
+        return [(p['scopes'], p['iat']) for p in _perms]
 
     def rec_rm_permission(self, user, requestor, rsid):
         """
@@ -742,7 +716,7 @@ class UmaAS(object):
             for ss in rs["subsets"]:
                 self.rec_rm_permission(user, requestor, ss)
         try:
-            self.permit.delete_permit(user, requestor, rsid)
+            self.permit.delete_request(user, requestor, rsid)
         except KeyError:
             pass
 
@@ -758,7 +732,7 @@ class UmaAS(object):
         return True
 
     def rsid_permits(self, user, requestor):
-        return self.permit.get_rsid_permits(user, requestor)
+        return self.permit.get_rsid_requests(user, requestor)
 
 
 # ----------------------------------------------------------------------------
@@ -838,7 +812,8 @@ class OAuth2UmaAS(OAUTH2Provider, UmaAS):
                                                         if_match, **kwargs)
 
     def dynamic_client_endpoint(self, request="", environ=None, **kwargs):
-        return self.registration_endpoint(request, environ, **kwargs)
+        return self.registration_endpoint(request=request, environ=environ,
+                                          **kwargs)
 
     def permission_registration_endpoint(self, request="", authn="", **kwargs):
         try:
@@ -890,7 +865,7 @@ class OidcDynRegUmaAS(UmaAS):
                 base, sdb, cdb, authn_broker, userinfo,
                 authz, client_authn, symkey, urlmap, ca_certs,
                 keyjar, hostname, template_lookup, verify_login_template),
-            "dyn_reg": dynreg.Provider(
+            "dyn_reg": OAUTH2Provider(
                 base, sdb, cdb, authn_broker, authz, client_authn, symkey,
                 urlmap, client_authn_methods=CLIENT_AUTHN_METHOD),
             "oauth": OAUTH2Provider(

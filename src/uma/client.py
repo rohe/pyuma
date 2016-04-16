@@ -2,32 +2,33 @@ import base64
 import logging
 
 from oic import oic
+from oic import rndstr
+
 from oic.exception import MissingSession
 
-from oic.oauth2 import rndstr
+from oic.extension import client
+
 from oic.oauth2.message import AuthorizationRequest
-from oic.oauth2 import dynreg
+from oic.oic import AuthorizationResponse
+from oic.oic import PARAMMAP
 from oic.oic.message import ProviderConfigurationResponse
+
 from oic.utils.authn.authn_context import PASSWORD
-from uma.message import AuthorizationDataRequest, ResourceSetDescription, \
-    ResourceSetResponse
-from uma.message import IntrospectionRequest
-from uma.message import PermissionRegistrationRequest
-from uma.message import ProviderConfiguration
-from uma.message import RPTResponse
+from oic.utils.authn.client import CLIENT_AUTHN_METHOD
+from oic.utils.http_util import Redirect
+from oic.utils.http_util import Response
 
 from uma import AAT
 from uma import PAT
-from uma.message import RPTRequest
-
-from oic.oic import AuthorizationResponse, PARAMMAP, OIDCONF_PATTERN
-from oic.utils.authn.client import CLIENT_AUTHN_METHOD
-from oic.utils.http_util import Response
-from oic.utils.http_util import Redirect
-# from oic.utils.http_util import R2C
-
 from uma import UMAError
+from uma.message import AuthorizationDataRequest
+from uma.message import IntrospectionRequest
+from uma.message import PermissionRegistrationRequest
 from uma.message import PermissionRegistrationResponse
+from uma.message import ProviderConfiguration
+from uma.message import ResourceSetDescription
+from uma.message import RPTRequest
+from uma.message import RPTResponse
 
 __author__ = 'rolandh'
 
@@ -48,21 +49,20 @@ DEF_SIGN_ALG = {"id_token": "RS256",
                 "private_key_jwt": "HS256"}
 
 
-class Client(dynreg.Client):
+class Client(client.Client):
     """ An UMA client implementation based on OAuth2 with Dyn Reg.
     """
-    # noinspection PyUnusedLocal
+
     def __init__(self, client_id=None, ca_certs=None, client_prefs=None,
                  client_authn_methods=None, keyjar=None, conf=None,
-                 server_info=None, authz_page="", flow_type="", password=None,
-                 registration_info=None, response_type="", scope="",
-                 verify_ssl=True):
+                 authz_page="", flow_type="",  registration_info=None,
+                 response_type="", scope="", verify_ssl=True, acr=''):
 
-        config = {"authz_page": authz_page,
-                  "response_type": response_type,
-                  "scope": scope}
+        # config = {"authz_page": authz_page,
+        #           "response_type": response_type,
+        #           "scope": scope}
 
-        dynreg.Client.__init__(self, client_id, ca_certs, client_authn_methods,
+        client.Client.__init__(self, client_id, ca_certs, client_authn_methods,
                                keyjar, verify_ssl)
 
         self.oidc_client = oic.Client(client_id, ca_certs, client_prefs,
@@ -95,6 +95,7 @@ class Client(dynreg.Client):
             # "AuthorizationDataRequest": "authorization_data_request_endpoint",
             "RPTRequest": "rpt_endpoint"
         })
+        self.acr = acr or ''
 
     def init_relationship(self, provider_url):
         if not self.provider_info:
@@ -309,6 +310,87 @@ class Client(dynreg.Client):
         reg_info = self.register(dce, **self.registration_info)
         logger.debug("Registration response: %s" % reg_info)
 
+    def endpoint(self, request):
+        return self.provider_info[self.request2endpoint[request]]
+
+    def do_register_permission_request(self, requestor, request):
+        """
+        Try to register a permission request
+        :param requestor: On who's behalf this registration is done
+        :param request: A JSON encoded request
+        """
+        return self.operation(
+            self.endpoint('PermissionRegistrationRequest'),
+            requestor, 'PUT', data=request)
+
+    def rs_query(self, destination, requestor, oper="GET", **kwargs):
+        """
+
+        :param destination: Destination, a URL
+        :param requestor: an identifier representing the requestor
+        :param oper: HTTP operation ['GET', 'POST, ...]
+        """
+        try:
+            rpt = self.token[requestor]["RPT"]
+        except KeyError:
+            rpt = None
+
+        if rpt:
+            _args = {"headers": {"Authorization": "Bearer %s" % rpt}}
+        else:
+            _args = {}
+
+        return self.send(destination, oper, **_args)
+
+    def operation(self, destination, requestor, oper="GET", **kwargs):
+        """
+
+        :param destination: Destination, a URL
+        :param requestor: The entity_id of the SP that requests the information
+        :param attrs: which attributes to return
+        param kwargs: extra keyword arguments
+        """
+        try:
+            state = kwargs["state"]
+        except KeyError:
+            state = rndstr()
+            self.state[requestor] = state
+
+        try:
+            authn_method = kwargs["authn_method"]
+        except:
+            authn_method = ""
+
+        resp = self.rs_query(destination, requestor, oper, **kwargs)
+
+        if resp.status_code == 200:
+            return Response(resp.text)
+
+        if resp.status_code == 401:  # No RPT
+            as_uri = resp.headers["as_uri"]
+            resp = self.acquire_grant(as_uri, "RPT", requestor, state,
+                                      self.acr, authn_method)
+            return resp
+            # elif resp.status_code == 302:  # which it should be
+            #     # redirect that are part of the grant code flow
+            #     headers = [(a, b) for a, b in resp.headers.items()
+            #                if a != "location"]
+            #     return Redirect(resp.headers["location"], headers=headers)
+            # elif resp.status_code == 200:  # ???
+            #     return Response(resp.text)
+            # else:
+            #     return R2C[resp.status_code](resp.text)
+
+        if resp.status_code == 403:  # Permission registered, got ticket
+            if state == "403":  # loop ?
+                return {}
+            prr = PermissionRegistrationResponse().from_json(resp.text)
+            resp = self.authorization_data_request(requestor, prr["ticket"])
+            if resp.status_code in (200, 201):
+                return self.operation(self.endpoint('RPTRequest'),
+                                      requestor, oper, **kwargs)
+
+        raise UMAError()
 
 # the API to the UMA protected IDP system that the IdP uses
 
@@ -337,9 +419,8 @@ class UMAClient():
         This is the main API
 
         :param resource: resource definition
-        :param requestor: The entity_id of the SP that requests the information
-        :param attrs: which attributes to return
-        :param state: Where in the process am I
+        :param requestor: The identifier of the entity that requests the
+            information
         :param typ: Type of operation ['GET', 'POST', 'PUT', ..]
         """
         return self.operation(resource, requestor, oper, **kwargs)
@@ -347,7 +428,7 @@ class UMAClient():
     def rs_query(self, resource, requestor, oper="GET", **kwargs):
         """
 
-        :param resource: resource definition
+        :param resource: resource definition, a URL
         :param requestor: an identifier representing the requestor
         :param oper: HTTP operation ['GET', 'POST, ...]
         """
@@ -369,7 +450,7 @@ class UMAClient():
         :param owner: user identifier
         :param requestor: The entity_id of the SP that requests the information
         :param attrs: which attributes to return
-        :param state: Where in the process am I
+        param kwargs: extra keyword arguments
         """
         try:
             state = kwargs["state"]

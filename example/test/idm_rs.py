@@ -5,9 +5,8 @@ from oic.utils.authn.client import BearerHeader
 from oic.utils.keyio import keyjar_init
 
 from uma import PAT
-from uma.resourcesrv import ResourceServer1C
-from idm import UserInfo
-from uma.rest_wrap import RESTIDMWrap
+from rest_wrap import RESTIDMWrap
+from uma.resource_srv import ResourceServer
 
 __author__ = 'roland'
 
@@ -58,7 +57,7 @@ def main(base_url, cookie_handler):
     }
 
     dataset = RESTIDMWrap(USERDB, baseurl=config["baseurl"])
-    res_srv = ResourceServer1C(dataset, **config)
+    res_srv = ResourceServer(dataset, 'alice', {}, **config)
 
     jwks = keyjar_init(res_srv, KEYS, "a%d")
 

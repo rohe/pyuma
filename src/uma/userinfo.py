@@ -1,5 +1,5 @@
 import logging
-import urllib.request, urllib.parse, urllib.error
+from urllib.parse import quote
 
 from oic.oic import AuthorizationResponse
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
@@ -8,7 +8,7 @@ from oic.utils.http_util import Response
 from uma import UMAError
 from uma.client import Client
 from uma.message import PermissionRegistrationResponse
-from uma.resourcesrv import create_query
+from uma.resource_srv import create_query
 
 __author__ = 'rolandh'
 
@@ -24,7 +24,9 @@ class UserInfo(object):
     def __call__(self, **kwargs):
         pass
 
+
 # the API to the UMA protected IDP system that the IdP uses
+
 
 class UMAUserInfo(UserInfo):
     def __init__(self, client_name, redirect_uris, resource_srv, acr,
@@ -68,7 +70,7 @@ class UMAUserInfo(UserInfo):
         except KeyError:
             rpt = None
 
-        url = create_query(self.resource_srv, urllib.parse.quote(user), attr)
+        url = create_query(self.resource_srv, quote(user), attr)
 
         if rpt:
             kwargs = {"headers": {"Authorization": "Bearer %s" % rpt}}
@@ -104,8 +106,8 @@ class UMAUserInfo(UserInfo):
             as_uri = resp.headers["as_uri"]
             return self.client.acquire_grant(as_uri, "RPT", user_and_sp, state,
                                              self.acr, **args)
-            #if isinstance(resp, Redirect):  # which it should be
-                # redirect that are part of the grant code flow
+            # if isinstance(resp, Redirect):  # which it should be
+            # redirect that are part of the grant code flow
             #    return resp
             # elif resp.status_code == 200:  # ???
             #     return Response(resp.text)

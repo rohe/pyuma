@@ -1,8 +1,11 @@
-import json
-from oic.utils.http_util import NotFound, NoContent
 import pytest
-from uma.authzsrv import UmaAS, RSR_PATH
-from uma.message import ResourceSetDescription, StatusResponse, PermissionRegistrationRequest
+from oic.utils.http_util import NoContent
+from oic.utils.http_util import NotFound
+from uma.authz_srv import RSR_PATH
+from uma.authz_srv import UmaAS
+from uma.message import PermissionRegistrationRequest
+from uma.message import ResourceSetDescription
+from uma.message import StatusResponse
 
 __author__ = 'roland'
 

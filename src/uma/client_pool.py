@@ -1,17 +1,14 @@
 import logging
 import traceback
 import sys
-from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 
-from oic.utils.http_util import Response
-from oic.oauth2 import rndstr
-#from oic.oauth2 import PBase
+from oic import rndstr
 from oic.oauth2.message import ErrorResponse
-
 from oic.oic.message import AuthorizationResponse
 from oic.oic.message import AuthorizationRequest
 from oic.oic.message import AccessTokenResponse
-#from oic.utils.webfinger import WebFinger
+from oic.utils.authn.client import CLIENT_AUTHN_METHOD
+from oic.utils.http_util import Response
 
 __author__ = 'rolandh'
 
@@ -46,7 +43,6 @@ class Pool(object):
         self.pool_config = pool_config
 
         self.registration_info = {}
-        #self.oic_client = {}
         self.client = {}
         self.template_lookup = template_lookup
 

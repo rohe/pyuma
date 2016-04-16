@@ -9,7 +9,7 @@ from oic.utils.authz import Implicit
 from oic.utils.keyio import keyjar_init
 from oic.utils.sdb import SessionDB
 from oic.utils.userinfo import UserInfo
-from uma import authzsrv
+from uma import authz_srv
 
 __author__ = 'roland'
 
@@ -99,13 +99,13 @@ def main(base, cookie_handler):
            10, base_url)
     ab.add("BasicAuthn", BasicAuthnExtra(None, PASSWD), 10, base_url)
 
-    AUTHZSRV = authzsrv.OidcDynRegUmaAS(
+    AS = authz_srv.OidcDynRegUmaAS(
         base, SessionDB(base_url), CDB, ab, USERINFO, AUTHZ,
         verify_client, "1234567890", keyjar=None, configuration=as_conf,
         base_url=base)
 
-    cookie_handler.init_srv(AUTHZSRV)
-    jwks = keyjar_init(AUTHZSRV, KEYS, "a%d")
+    cookie_handler.init_srv(AS)
+    jwks = keyjar_init(AS, KEYS, "a%d")
 
     fp = open("static/jwk_as.json", "w")
     fp.write(json.dumps(jwks))

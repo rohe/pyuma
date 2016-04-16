@@ -1,5 +1,5 @@
 from urllib.parse import parse_qs
-from uma.db_wrap import DBWrap
+from uma.dbwrap.dictdb import DictDBWrap
 from uma.message import ResourceSetDescription
 
 __author__ = 'roland'
@@ -21,10 +21,11 @@ def operation2scope(operation):
     return OP2SCOPE[operation]
 
 
-class RESTIDMWrap(DBWrap):
+class RESTIDMWrap(DictDBWrap):
     def __init__(self, db, **kwargs):
-        DBWrap.__init__(self, db, list(OP2SCOPE.values()), **kwargs)
+        DictDBWrap.__init__(self, db, **kwargs)
         self.base_url = kwargs["baseurl"]
+        self.scopes = list(OP2SCOPE.values())
 
     def _register(self, user, key, val=None, scopes=None, parent=None):
         if val:

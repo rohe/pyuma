@@ -1,5 +1,5 @@
 import pytest
-from uma.rest_wrap import RESTIDMWarp
+from rest_wrap import RESTIDMWarp
 
 __author__ = 'roland'
 

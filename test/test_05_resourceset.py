@@ -1,10 +1,12 @@
+import pytest
+
 from oic.oauth2.util import JSON_ENCODED
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
-import pytest
+
 from uma.client import Client
-from uma.db_wrap import DictDBWrap
+from uma.dbwrap.dictdb import DictDBWrap
 from uma.message import ResourceSetDescription
-from uma.resourceset import ResourceSetHandler
+from uma.resource_set import ResourceSetHandler
 
 __author__ = 'roland'
 
@@ -31,17 +33,44 @@ class TestResourceSetHandler(object):
     @pytest.fixture(autouse=True)
     def create_client(self):
         dataset = DictDBWrap(USERDB)
+        # The scope to dataset operation map
+        dataset.register_scope('https://dirg.org.umu.se/uma/read', 'get')
+
         client = Client({}, client_authn_methods=CLIENT_AUTHN_METHOD)
-        self.rsh = ResourceSetHandler(dataset, client, "hans")
-        self.rsh.dataset.scopes2op[
-            'https://dirg.org.umu.se/uma/read'] = self.rsh.dataset.get
+
+        resource_owner = 'hans'
+        self.rsh = ResourceSetHandler(dataset, client, resource_owner)
+
         self.rsh.client.provider_info = {
             "resource_set_registration_endpoint": 'https://as.example.com/rsr'}
+
+        # No the real PAT obviously
         self.rsh.token["PAT"] = 'pat'
+
+        # map client API operation (HTTP GET) to scope
+        self.rsh.op2scope = {'GET': 'https://dirg.org.umu.se/uma/read'}
 
     def test_register_init(self):
         res_set_desc = self.rsh.register_init()
         assert len(res_set_desc) == 5
+
+    def test_com_args(self):
+        request_args = {'name': 'gloria',
+                        'scopes': ['https://dirg.org.umu.se/uma/read']}
+        rsid = 'abcd'
+        _kwargs = self.rsh.com_args(ResourceSetDescription, 'PUT',
+                                    request_args=request_args,
+                                    content_type=JSON_ENCODED,
+                                    rsid=rsid)
+
+        assert _kwargs['url'] == 'https://as.example.com/rsr/resource_set/abcd'
+        assert _kwargs['body'] in [
+            '{"scopes": ["https://dirg.org.umu.se/uma/read"], "name": "gloria"}',
+            '{"name": "gloria", "scopes": ["https://dirg.org.umu.se/uma/read"]}'
+        ]
+        assert _kwargs["http_args"] == {
+            'headers': {'Content-Type': 'application/json',
+                        'Authorization': 'Bearer pat'}}
 
     def test_create_rsd(self):
         res_set_desc = self.rsh.register_init()
@@ -77,3 +106,10 @@ class TestResourceSetHandler(object):
             'headers': {'Content-Type': 'application/json',
                         'Authorization': 'Bearer pat'}}
 
+    def test_query2permission_registration_request_primer(self):
+        self.rsh.register_init()
+        _prim = self.rsh.query2permission_registration_request_primer(
+            'GET', 'hans', 'attr=givenName')
+
+        assert _prim == [('hans:givenName:Hans',
+                          'https://dirg.org.umu.se/uma/read')]

@@ -1,6 +1,6 @@
 import pytest
-from uma.db_wrap import DictDBWrap
 from uma.message import ResourceSetDescription
+from uma.dbwrap.dictdb import DictDBWrap
 
 __author__ = 'roland'
 

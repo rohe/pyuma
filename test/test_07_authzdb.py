@@ -1,8 +1,8 @@
 import pytest
-from uma.authzdb import AuthzDB
-from uma.authzsrv import safe_name
+from uma.authz_db import MemAuthzDB
+from uma.authz_db import UnknownObject
+from uma.authz_srv import safe_name
 from uma.message import AuthzDescription
-from uma.resource_set import UnknownObject
 from bson.errors import BSONError
 
 __author__ = 'rolandh'
@@ -20,8 +20,8 @@ ATTR = "http://fim.example.com/uma/attr"
 
 @pytest.mark.db
 def test_1():
-    authz_db = AuthzDB(AuthzDescription, DB_NAME, COLLECTION)
-    authz_db.restart(COLLECTION)
+    authz_db = MemAuthzDB(AuthzDescription)
+    authz_db.restart()
 
     rsd = AuthzDescription(
         resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
@@ -87,8 +87,8 @@ def test_2():
     owner = DB_NAME
     client_id = "http://xenosmilus2.umdc.umu.se:8089/foo"
     collection = safe_name("%s:%s" % (owner, client_id))
-    authz_db = AuthzDB(AuthzDescription, "uma_idm", collection)
-    authz_db.restart(collection)
+    authz_db = MemAuthzDB(AuthzDescription)
+    authz_db.restart()
 
 
 if __name__ == "__main__":

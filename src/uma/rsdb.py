@@ -1,6 +1,3 @@
-# from bson.errors import InvalidId
-# from bson.objectid import ObjectId
-# import pymongo
 import hashlib
 import json
 

@@ -26,12 +26,13 @@ setup(
     author="Roland Hedberg",
     author_email="roland.hedberg@umu.se",
     license="Apache 2.0",
-    packages=["uma"],
+    packages=["uma", 'uma/dbwrap'],
     package_dir={"": "src"},
-    classifiers=["Development Status :: 4 - Beta",
-                 "License :: OSI Approved :: Apache Software License",
-                 "Topic :: Software Development :: Libraries :: Python "
-                 "Modules"],
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "License :: OSI Approved :: Apache Software License",
+        "Programming Language :: Python :: 3.5",
+        "Topic :: Software Development :: Libraries :: Python Modules"],
     install_requires=['oic', 'pymongo==3.0.1'],
 
     zip_safe=False,
