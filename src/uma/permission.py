@@ -1,74 +1,18 @@
-import json
 from oic.utils.time_util import utc_time_sans_frac
 from uma.message import AuthzDescription
-from uma.message import PermissionRegistrationRequest
 
 __author__ = 'roland'
 
 
-class PermissionRequests(object):
-    def __init__(self):
-        self.request = {}
-
-    def add_request(self, ticket, req):
-        """
-        :param req: The Permission Registration Request as a JSON encoded string
-            Note that the request can be a list of requests.
-        """
-        decoded_req = json.loads(req)
-        if isinstance(decoded_req, list):
-            prr_req = []
-            for item in decoded_req:
-                prr_req.append(PermissionRegistrationRequest(**item))
-            self.request[ticket] = prr_req
-        else:
-            self.request[ticket] = [
-                PermissionRegistrationRequest(**decoded_req)]
-
-    def get_request(self, ticket):
-        """
-        :param ticket: The ticket returned when the Permission Registration
-            Request was made
-        :return: One or more umu.message.PermissionRegistrationRequest instances
-        """
-        return self.request[ticket]
-
-    def get_outstanding_requests(self, resource_set_id):
-        """
-        :param resource_set_id:
-        :return: A dictionary of tickets and requests
-        """
-        res = {}
-        for _tick, req_list in self.request.items():
-            for req in req_list:
-                if resource_set_id == req['resource_set_id']:
-                    res[_tick] = req
-                    break
-        return res
-
-    def del_request(self, ticket):
-        """
-        Remove a specific permission request
-        :param ticket: The ticket returned when the request was registered
-        """
-        del self.request[ticket]
-
-    def get_resource_set_id_list_from_request(self, ticket):
-        try:
-            return [rsd['resource_set_id'] for rsd in self.request[ticket]]
-        except KeyError:
-            return None
-
-
 class Permission(object):
+    """
+    Stores all registered permissions
+    """
     def __init__(self):
         self.db = {}
 
     def init_owner(self, owner):
-        self.db[owner] = {
-            "pending": {},
-            "accepted": {},
-        }
+        self.db[owner] = {}
 
     def set_request(self, owner, requestor, resource_id, scopes=None):
 
@@ -152,7 +96,7 @@ class Permission(object):
 
         return _remove
 
-    def get_rsid_requests(self, owner, requestor):
+    def pending_permission_requests(self, owner, requestor):
         """
         :return: list of resource set ids
         """

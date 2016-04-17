@@ -30,7 +30,7 @@ from oic.utils.keyio import KeyJar
 from oic.utils.time_util import utc_time_sans_frac
 
 from uma.client import UMA_SCOPE
-from uma.message import IntrospectionRequest
+from uma.message import IntrospectionRequest, PermissionRegistrationRequest
 from uma.message import AuthorizationDataResponse
 from uma.message import RPTRequest
 from uma.message import ErrorResponse
@@ -225,14 +225,17 @@ class UmaAS(object):
     def __init__(self, configuration=None, baseurl=""):
 
         self.conf_info = configuration or {}
+        # database with all the registered resource sets
         self.resource_set = MemResourceSetDB()
+        # database with all permission requests
+        self.permission_requests = PermissionRequests()
+        # database with all registered permissions
+        self.permit = Permission()
         self.rpt = {}
         self.baseurl = baseurl
         if not self.baseurl.endswith("/"):
             self.baseurl += "/"
         self.session = Session()
-        self.permit = Permission()
-        self.permission_requests = PermissionRequests()
         self.map_rsid_id = {}
         self.map_id_rsid = {}
         self.map_user_id = {}
@@ -281,7 +284,7 @@ class UmaAS(object):
         :returns: A Response instance
         """
 
-        # path should be /resource_set/{rsid} or /resource_set
+        # path must be /resource_set/{rsid} or /resource_set
         # Path may or may not start with '/'
         if path.startswith("/"):
             assert path[1:].startswith(RSR_PATH)
@@ -293,9 +296,11 @@ class UmaAS(object):
         if rsid.startswith("/"):
             rsid = rsid[1:]
 
+        # user names are not globally unique, so I have to make such an
+        # identifier
         _user = safe_name(entity, client_id)
         logger.debug("handling resource set belonging to '%s'" % _user)
-        #  self.resource_set.set_collection(_user)
+
         if method == "POST":  # create
             args = {"oid": _user, "data": body}
             func = self.resource_set.create
@@ -457,6 +462,32 @@ class UmaAS(object):
 
         return response
 
+    def to_prr(self, request):
+        """
+        Trying to register a permission for an unknown resource set will
+         fail
+
+        :param request: JSON encoded permission request or list of permission
+            requests
+        """
+        decoded_req = json.loads(request)
+        pr_req = []
+        if isinstance(decoded_req, list):
+            for item in decoded_req:
+                if item['resource_set_id'] in self.resource_set.rsid2oid:
+                    pr_req.append(PermissionRegistrationRequest(**item))
+                else:
+                    logger.warning(
+                        'Trying to register permission for unknown resource set')
+        else:
+            if decoded_req['resource_set_id'] in self.resource_set.rsid2oid:
+                pr_req.append(PermissionRegistrationRequest(**decoded_req))
+            else:
+                logger.warning(
+                    'Trying to register permission for unknown resource set')
+
+        return pr_req
+
     def permission_registration_endpoint_(self, entity, **kwargs):
         """
         The endpoint URI at which the resource server registers a
@@ -464,12 +495,16 @@ class UmaAS(object):
         This is a proposed permission waiting for the user to accept it.
         """
         request = kwargs["request"]
-        _ticket = rndstr(24)
-        logging.debug("Registering permission request: %s" % request)
-        resp = PermissionRegistrationResponse(ticket=_ticket)
-        self.permission_requests.add_request(_ticket, request)
+        prr = self.to_prr(request)
+        if prr:
+            _ticket = rndstr(24)
+            logging.debug("Registering permission request: %s" % request)
+            resp = PermissionRegistrationResponse(ticket=_ticket)
+            self.permission_requests.add_request(_ticket, prr)
 
-        return Created(resp.to_json(), content="application/json")
+            return Created(resp.to_json(), content="application/json")
+        else:
+            BadRequest("Can't register permission for unknown resource")
 
     def requesting_party_claims_endpoint(self, request="", **kwargs):
         """
@@ -675,29 +710,45 @@ class UmaAS(object):
                 # immediate expiration
                 self.session.update(_rpt, expires_at=0)
 
-    def store_permission(self, user, requestor, rsids):
+    def store_permission(self, owner, user, permissions):
         """
-        :param user: The resource owner
-        :param requestor: The requestor ID
-        :param rsids: dictionary with Resource set IDs as keys and scopes
+        Store permissions given by <owner> to <user>
+
+        :param owner: The resource owner
+        :param user: Identifier for the entity given the permission
+        :param permissions: dictionary with Resource set IDs as keys and scopes
             as values
         """
 
-        logger.info("store: (%s, %s, %s)" % (user, requestor, rsids))
+        logger.info("store: (%s, %s, %s)" % (owner, user, permissions))
 
-        present = self.permit.get_rsid_requests(user, requestor)
-        _new = [k for k in list(rsids.keys()) if k not in present]
-        _user = safe_name(user, requestor)
-        for rsid in _new:
-            scopes = rsids[rsid]
+        for rsid, scopes in permissions.items():
+            max_scopes = self.resource_set.read(owner, rsid)["scopes"]
+
+            # if no scopes are defined == all are requested
             if scopes is None:
-                rs = self.resource_set.read(_user, rsid)
-                scopes = rs["scopes"]
-            self.permit.set_request(user, requestor, rsid, scopes)
+                scopes = max_scopes
+            else:
+                scopes = [s for s in scopes if s in max_scopes]
 
-        _rem = [k for k in present if k not in rsids]
+            self.register_permission(owner, rpt, rsid, scopes)
+
+        pending = self.permit.pending_permission_requests(owner, user)
+
+        # find request that is not covered by earlier permission requests
+        _new = [k for k in list(permissions.keys()) if k not in pending]
+
+
+        for rsid in _new:
+            max_scopes = self.resource_set.read(_owner, rsid)["scopes"]
+            scopes = permissions[rsid]
+
+
+            self.permit.set_request(owner, user, rsid, scopes)
+
+        _rem = [k for k in pending if k not in permissions]
         for rsid in _rem:
-            self.permit.delete_request(user, requestor, rsid)
+            self.permit.delete_request(owner, user, rsid)
 
     def read_permission(self, user, requestor, rsid):
         _perms = self.permit.get_request(user, requestor, rsid)
@@ -732,7 +783,7 @@ class UmaAS(object):
         return True
 
     def rsid_permits(self, user, requestor):
-        return self.permit.get_rsid_requests(user, requestor)
+        return self.permit.pending_permission_requests(user, requestor)
 
 
 # ----------------------------------------------------------------------------

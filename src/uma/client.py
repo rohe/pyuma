@@ -143,7 +143,7 @@ class Client(client.Client):
 
         self.init_relationship(resource_server)
 
-        if token_type == "RPT" and not "AAT" in self.token:
+        if token_type == "RPT" and not "AAT" in self.token[userid]:
             # Must have AAT first
             resp = self.acquire_grant(resource_server, "AAT", userid, state,
                                       acr, authn_method, **kwargs)

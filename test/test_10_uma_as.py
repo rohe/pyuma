@@ -1,5 +1,5 @@
 import pytest
-from oic.utils.http_util import NoContent
+from oic.utils.http_util import NoContent, Created
 from oic.utils.http_util import NotFound
 from uma.authz_srv import RSR_PATH
 from uma.authz_srv import UmaAS
@@ -30,9 +30,9 @@ def test_inital_add():
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 
-    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="POST",
-                                                   body=data, client_id="12345678",
-                                                   if_match="xyzzy")
+    resp = uas.resource_set_registration_endpoint_(
+        "alice", RSR_PATH, method="POST", body=data, client_id="12345678",
+        if_match="xyzzy")
     _stat = StatusResponse().from_json(resp.message)
     rsid = _stat["_id"]
 
@@ -40,10 +40,13 @@ def test_inital_add():
     assert headers["Location"] == "/{}/{}".format(RSR_PATH, rsid)
 
     read_write = [SCOPES["read"], SCOPES["write"]]
-    uas.permission_registration_endpoint_("alice", request=PermissionRegistrationRequest(
-        resource_set_id=rsid, scopes=read_write).to_json())
+    resp = uas.permission_registration_endpoint_(
+        "alice", request=PermissionRegistrationRequest(
+            resource_set_id=rsid, scopes=read_write).to_json())
 
-    uas.store_permission("alice", "roger", {rsid: read_write})
+    assert isinstance(resp, Created)
+
+    resp = uas.store_permission("alice", "roger", {rsid: read_write})
 
     scopes, ts = uas.read_permission("alice", "roger", rsid)
 
