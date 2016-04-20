@@ -1,9 +1,7 @@
 import pytest
-from uma.authz_db import MemAuthzDB
-from uma.authz_db import UnknownObject
-from uma.authz_srv import safe_name
+from uma.authz_db import MemAuthzDB, PDDB
+from uma.authz_db import PermissionDescription
 from uma.message import AuthzDescription
-from bson.errors import BSONError
 
 __author__ = 'rolandh'
 
@@ -17,43 +15,35 @@ def _eq(l1, l2):
 
 ATTR = "http://fim.example.com/uma/attr"
 
+RSD = PermissionDescription(
+    resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
+    entity="https://lingon.ladok.umu.se:8087/sp.xml",
+    scopes=[
+        "%s/givenName/Roland" % ATTR,
+        "%s/surName/Hedberg" % ATTR,
+        "%s/displayName/Roland%%20Hedberg" % ATTR,
+        "%s/cn/Roland%%20Hedberg" % ATTR,
+        "%s/eduPersonScopedAffiliation/member@umu.se" % ATTR,
+        "%s/eduPersonScopedAffiliation/employee@umu.se" % ATTR,
+        "%s/eduPersonScopedAffiliation/staff@umu.se" % ATTR
+    ],
+)
 
-@pytest.mark.db
+
 def test_1():
-    authz_db = MemAuthzDB(AuthzDescription)
-    authz_db.restart()
+    authz_db = MemAuthzDB()
 
-    rsd = AuthzDescription(
-        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-        entity="https://lingon.ladok.umu.se:8087/sp.xml",
-        scopes=[
-            "%s/givenName/Roland" % ATTR,
-            "%s/surName/Hedberg" % ATTR,
-            "%s/displayName/Roland%%20Hedberg" % ATTR,
-            "%s/cn/Roland%%20Hedberg" % ATTR,
-            "%s/eduPersonScopedAffiliation/member@umu.se" % ATTR,
-            "%s/eduPersonScopedAffiliation/employee@umu.se" % ATTR,
-            "%s/eduPersonScopedAffiliation/staff@umu.se" % ATTR
-        ],
-    )
+    rid = authz_db.store(RSD)
 
-    rid = authz_db.store(rsd.to_json())
-
-    item = authz_db.read(rid)
+    item = authz_db.find_one({'_id': rid})
 
     assert item
-    assert isinstance(item, AuthzDescription)
-    for key, val in list(rsd.items()):
+    assert isinstance(item, PermissionDescription)
+    for key, val in list(RSD.items()):
         assert key in item
         assert item[key] == val
 
-    try:
-        authz_db.read("phoney")
-        assert False
-    except UnknownObject:
-        pass
-    except BSONError:
-        pass
+    assert authz_db.read(resource_set_id="phoney") == []
 
     res = authz_db.match(
         resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
@@ -81,15 +71,25 @@ def test_1():
 
     assert res is False
 
+    rols = authz_db.read(entity="https://lingon.ladok.umu.se:8087/sp.xml")
 
-@pytest.mark.db
+    assert rols
+
+    authz_db.remove(pdid=rid)
+
+    assert authz_db.match(
+        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
+        entity="https://lingon.ladok.umu.se:8087/sp.xml") == False
+
+
 def test_2():
-    owner = DB_NAME
-    client_id = "http://xenosmilus2.umdc.umu.se:8089/foo"
-    collection = safe_name("%s:%s" % (owner, client_id))
-    authz_db = MemAuthzDB(AuthzDescription)
-    authz_db.restart()
+    _db = PDDB()
+
+    _db.add('roland', RSD)
 
 
-if __name__ == "__main__":
-    test_2()
+    res = authz_db.match(
+        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
+        entity="https://lingon.ladok.umu.se:8087/sp.xml")
+
+    assert res

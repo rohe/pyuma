@@ -24,6 +24,9 @@ class ServiceError(UMAError):
 
 
 class ResourceSetHandler(object):
+    """
+    Lives at the RS
+    """
     def __init__(self, dataset, client, resource_owner):
         self.dataset = dataset
         self.client = client
@@ -81,7 +84,7 @@ class ResourceSetHandler(object):
 
         return {"url": url, "body": body, "http_args": http_args, "csi": csi}
 
-    def read_resource_set_description(self, rsid="",
+    def read(self, rsid="",
                                       response_cls=ResourceSetResponse):
         """
         Reads a resource set description from the Authorization server
@@ -116,7 +119,7 @@ class ResourceSetHandler(object):
             raise OtherError("HTTP ERROR: %s [%s] on %s" % (
                 reqresp.text, reqresp.status_code, reqresp.url))
 
-    def delete_resource_set_description(self, rsid):
+    def delete(self, rsid):
         """
         Removes a resource set description from the Authorization server
 
@@ -135,12 +138,9 @@ class ResourceSetHandler(object):
         else:
             return False
 
-    def update_resource_set_description(self, request=ResourceSetDescription,
-                                        body_type="json", method="PUT",
-                                        request_args=None, extra_args=None,
-                                        http_args=None, rsid="",
-                                        response_cls=ResourceSetResponse,
-                                        **kwargs):
+    def update(self, request=ResourceSetDescription, body_type="json",
+            method="PUT", request_args=None, extra_args=None, http_args=None,
+            rsid="", response_cls=ResourceSetResponse, **kwargs):
         """
         Updates a resource set description from the Authorization server
 
@@ -154,7 +154,10 @@ class ResourceSetHandler(object):
         return self.client.request_and_return(response_cls, method, body_type,
                                               **_kwargs)
 
-    def list_resource_set_description(self):
+    def is_resource_set_changed(self, rsid, val):
+        pass
+
+    def list(self):
         """
         List resource set descriptions on an Authorization server
 
@@ -165,15 +168,9 @@ class ResourceSetHandler(object):
 
         return self.client.http_request(method="GET", **_kwargs)
 
-    def is_resource_set_changed(self, rsid, val):
-        pass
-
-    def create_resource_set_description(self, request=ResourceSetDescription,
-                                        body_type="json", method="POST",
-                                        request_args=None,
-                                        extra_args=None, http_args=None,
-                                        response_cls=ResourceSetResponse,
-                                        **kwargs):
+    def create(self, request=ResourceSetDescription, body_type="json",
+            method="POST", request_args=None, extra_args=None, http_args=None,
+            response_cls=ResourceSetResponse, **kwargs):
 
         _kwargs = self.com_args(request, method, request_args,
                                 extra_args, http_args,

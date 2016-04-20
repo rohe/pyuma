@@ -41,14 +41,18 @@ def test_inital_add():
 
     read_write = [SCOPES["read"], SCOPES["write"]]
     resp = uas.permission_registration_endpoint_(
-        "alice", request=PermissionRegistrationRequest(
-            resource_set_id=rsid, scopes=read_write).to_json())
+        owner="alice", request=PermissionRegistrationRequest(
+            resource_set_id=rsid, scopes=read_write).to_json(),
+        client_id="12345678")
 
     assert isinstance(resp, Created)
 
-    resp = uas.store_permission("alice", "roger", {rsid: read_write})
+    resp = uas.store_permission(owner="alice", user="roger",
+                                permissions={rsid: read_write},
+                                client_id="12345678")
 
-    scopes, ts = uas.read_permission("alice", "roger", rsid)
+    scopes, ts = uas.read_permission("alice", "roger", rsid,
+                                     client_id="12345678")
 
     assert _eq(scopes, read_write)
 
@@ -58,9 +62,9 @@ def test_delete_resource_set():
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 
-    resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH, method="POST",
-                                                   body=data, owner="alice",
-                                                   client_id="12345678")
+    resp = uas.resource_set_registration_endpoint_(
+        owner="alice", path=RSR_PATH, method="POST", body=data,
+        client_id="12345678")
 
     _stat = StatusResponse().from_json(resp.message)
     rsid = _stat["_id"]
