@@ -90,3 +90,18 @@ class PermissionRequests(object):
                 if user not in res:
                     res.append(user)
         return res
+
+    def covers(self, rsid, scopes):
+        """
+        Finds permission requests that are covered by this pattern
+
+        :param rsid: Resource Set Identifier
+        :param scopes: list of scopes
+        :return: tickets
+        """
+        _scope_set = set(scopes)
+        res = []
+        for t, req in self.rsid2requests(rsid).items():
+            if set(req['scopes']).issubset(_scope_set):
+                res.append(t)
+        return res

@@ -1,6 +1,10 @@
+import os
+
 import pytest
 from oic.utils.http_util import NoContent, Created
 from oic.utils.http_util import NotFound
+from oic.utils.keyio import build_keyjar
+
 from uma.authz_srv import RSR_PATH
 from uma.authz_srv import UmaAS
 from uma.message import PermissionRegistrationRequest
@@ -27,6 +31,12 @@ def _eq(l1, l2):
 
 def test_inital_add():
     uas = UmaAS()
+    keys = [
+        {"type": "RSA", "use": ["enc", "sig"]},
+    ]
+    #jwks, keyjar, kidd = build_keyjar(keys)
+    uas.keyjar = build_keyjar(keys)[1]
+    uas.rpt_factory.keyjar = uas.keyjar
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 

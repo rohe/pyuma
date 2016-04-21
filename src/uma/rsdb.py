@@ -105,3 +105,6 @@ class MemResourceSetDB(ResourceSetDB):
 
     def list(self, oid):
         return list(self.db[oid].keys())
+
+    def belongs_to(self, rsid, owner):
+        return rsid in self.db[owner]
