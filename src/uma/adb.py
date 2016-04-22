@@ -6,7 +6,6 @@ from oic.utils.jwt import JWT
 from oic.utils.time_util import utc_time_sans_frac
 
 from uma.authz_db import AuthzDB, PermissionDescription
-from uma.authz_srv import RSR_PATH
 from uma.message import AuthzDescription, ErrorResponse
 from uma.permission import Permission
 from uma.permission_request import PermissionRequests
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 class ADB(object):
     """ Expects to be one ADB instance per Resource Server """
 
-    def __init__(self, keyjar, rpt_lifetime, iss, ressrv_id):
+    def __init__(self, keyjar, rpt_lifetime, iss, ressrv_id, rsr_path):
         # database with all the registered resource sets
         self.resource_set = MemResourceSetDB()
         # database with all permission requests
@@ -37,6 +36,7 @@ class ADB(object):
         self.rpt_factory = JWT(keyjar, lifetime=rpt_lifetime, iss=iss)
         self.authzdesc_lifetime = 3600
         self.client_id = ressrv_id
+        self.rsr_path = rsr_path
 
     def pending_permission_requests(self, owner, user):
         """
@@ -93,7 +93,7 @@ class ADB(object):
         pm = PermissionDescription(
             resource_set_id=permission['resource_set_id'], scoped=scopes,
             entity=user)
-        self.authz_db.add(owner, requestor=user, perm_desc=pm)
+        return self.authz_db.add(owner, requestor=user, perm_desc=pm)
 
     def register_permission(self, owner, rpt, rsid, scopes, requires=None):
         """
@@ -177,7 +177,7 @@ class ADB(object):
                             'content': "application/json",
                             'headers': [
                                 ("ETag", _etag),
-                                ("Location", "/{}/{}".format(RSR_PATH,
+                                ("Location", "/{}/{}".format(self.rsr_path,
                                                              body["_id"]))]
                         }}
                 elif func == self.resource_set.update:

@@ -29,6 +29,7 @@ from oic.utils.http_util import Response
 from oic.utils.keyio import KeyJar
 from oic.utils.time_util import utc_time_sans_frac
 
+from uma.adb import ADB
 from uma.client import UMA_SCOPE
 from uma.message import AuthorizationDataRequest
 from uma.message import AuthorizationDataResponse
@@ -245,7 +246,7 @@ class UmaAS(object):
         except KeyError:
             # Should really be done together with RS/client registration
             self.rsdb[entity_id] = ADB(self.keyjar, self.rpt_lifetime,
-                                       self.baseurl)
+                                       self.baseurl, entity_id,RSR_PATH)
             return self.rsdb[entity_id]
 
     # def rpt_endpoint_(self, requestor, client_id, **kwargs):

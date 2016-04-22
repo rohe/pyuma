@@ -80,7 +80,7 @@ def test_delete_resource_set():
     rsid = _stat["_id"]
 
     read_write = [SCOPES["read"], SCOPES["write"]]
-    uas.store_permission("alice", "roger", {rsid: read_write})
+    uas.store_permission("alice", "roger", {rsid: read_write}, "12345678")
 
     resp = uas.resource_set_registration_endpoint_("alice", RSR_PATH + rsid,
                                             method="DELETE", owner="alice",
@@ -93,7 +93,8 @@ def test_delete_resource_set():
     assert isinstance(resp, NotFound)
 
     with pytest.raises(KeyError):
-        uas.read_permission("alice", "roger", rsid)  # make sure permission is removed when rs is deleted
+        # make sure permission is removed when rs is deleted
+        uas.read_permission("alice", "roger", rsid, "12345678")
 
 
 if __name__ == "__main__":

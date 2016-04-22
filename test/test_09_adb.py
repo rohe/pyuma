@@ -1,9 +1,11 @@
 from oic import rndstr
 from oic.utils.keyio import KeyBundle
 from oic.utils.keyio import KeyJar
+from uma.authz_srv import RSR_PATH
+
 from uma.adb import ADB
-from uma.authz_db import PermissionDescription
-from uma.message import PermissionRegistrationRequest, ResourceSetDescription
+from uma.message import PermissionRegistrationRequest
+from uma.message import ResourceSetDescription
 
 __author__ = 'roland'
 
@@ -59,7 +61,7 @@ RESSRV = 'https://example.com/rs'
 
 def test_senario_1():
     # create ADB instance
-    adb = ADB(KEYJAR, 3600, issuer, RESSRV)
+    adb = ADB(KEYJAR, 3600, issuer, RESSRV, RSR_PATH)
 
     # register resource set
     rsd = ResourceSetDescription(name='foo', scopes=[READ, WRITE])
@@ -77,7 +79,7 @@ def test_senario_1():
 
     # Authz dec made
     permission = {'resource_set_id': rsid, 'scopes': [READ]}
-    adb.store_permission(permission, 'alice', 'roger')
+    pid = adb.store_permission(permission, 'alice', 'roger')
 
     # Get an RPT. This should now work
     rpt = adb.issue_rpt(ticket, 'roger')
@@ -91,4 +93,11 @@ def test_senario_1():
     assert ad[0]['desc']['scopes'] == [READ]
 
     # Get an RPT. This should not work since the ticket is 'one time use'
-    rpt = adb.issue_rpt(ticket, 'roger')
+    assert adb.issue_rpt(ticket, 'roger') is None
+
+    # Now the authz is removed
+
+    adb.authz_db.delete('alice', 'roger', pdid=pid)
+
+    # Now introspections should fail
+    ad = adb.introspection(rpt)
