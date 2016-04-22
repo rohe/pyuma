@@ -5,11 +5,14 @@ from oic.exception import MessageException
 from oic.utils.jwt import JWT
 from oic.utils.time_util import utc_time_sans_frac
 
-from uma.authz_db import AuthzDB, PermissionDescription
-from uma.message import AuthzDescription, ErrorResponse
+from uma.authz_db import AuthzDB
+from uma.authz_db import PermissionDescription
+from uma.message import AuthzDescription
+from uma.message import ErrorResponse
 from uma.permission import Permission
 from uma.permission_request import PermissionRequests
-from uma.rsdb import MemResourceSetDB, UnknownObject
+from uma.rsdb import MemResourceSetDB
+from uma.rsdb import UnknownObject
 
 __author__ = 'roland'
 
@@ -20,14 +23,15 @@ class ADB(object):
     """ Expects to be one ADB instance per Resource Server """
 
     def __init__(self, keyjar, rpt_lifetime, iss, ressrv_id, rsr_path):
-        # database with all the registered resource sets
-        self.resource_set = MemResourceSetDB()
         # database with all permission requests
         self.permission_requests = PermissionRequests()
         # database with all authorization decisions
         self.authz_db = AuthzDB()
         # database with all registered permissions
         self.permit = Permission()
+        # database with all the registered resource sets
+        self.resource_set = MemResourceSetDB(
+            rsr_path=rsr_path, delete_rsid=self.permit.delete_rsid)
 
         self.map_rsid_id = {}
         self.map_id_rsid = {}
@@ -37,6 +41,8 @@ class ADB(object):
         self.authzdesc_lifetime = 3600
         self.client_id = ressrv_id
         self.rsr_path = rsr_path
+        self.ad2rpt = {}
+        self.rpt2adid = {}
 
     def pending_permission_requests(self, owner, user):
         """
@@ -54,14 +60,15 @@ class ADB(object):
                 res.append(tick)
         return res
 
-    def permission_request_allowed(self, ticket, requestor):
+    def permission_request_allowed(self, ticket, identity):
         """
         Verify that whatever permission requests the ticket represents
         they are now allow.
 
         :param ticket: The ticket
-        :param requestor: Who has the ticket
-        :return: True/False
+        :param identity: Who has the ticket
+        :return: Dictionary, with permission request as key and
+            identifiers of authz decisions that permits the requests as values.
         """
         try:
             prrs = self.permission_requests[ticket]
@@ -69,15 +76,23 @@ class ADB(object):
             logger.warning("Someone is using a ticket that doesn't exist")
             return False
         else:
+            result = {}
             for prr in prrs:
                 owner = self.resource_set.owner(prr['resource_set_id'])
-                if not self.authz_db.match(owner, requestor, **prr.to_dict()):
-                    return False
-            return True
+                _adids = self.authz_db.match(owner, identity, **prr.to_dict())
+                if not _adids:
+                    # all or nothing
+                    return {}
+                result[prr.to_json()] = _adids
+            return result
 
-    def store_permission(self, permission, owner, user):
+    def store_permission(self, permission, owner):
         """
+        Store a permission
 
+        :param permission: The permission to store
+        :param owner: The user setting the permission
+        :return: A permission ID
         """
         max_scopes = self.resource_set.read(
             owner, permission['resource_set_id'])["scopes"]
@@ -86,23 +101,20 @@ class ADB(object):
         try:
             _scopes = permission['scopes']
         except KeyError:
-            scopes = max_scopes
+            permission['scopes'] = max_scopes
         else:
-            scopes = [s for s in _scopes if s in max_scopes]
+            permission['scopes'] = [s for s in _scopes if s in max_scopes]
 
-        pm = PermissionDescription(
-            resource_set_id=permission['resource_set_id'], scoped=scopes,
-            entity=user)
-        return self.authz_db.add(owner, requestor=user, perm_desc=pm)
+        pm = PermissionDescription(**permission)
+        return self.authz_db.add(owner, perm_desc=pm)
 
-    def register_permission(self, owner, rpt, rsid, scopes, requires=None):
+    def register_permission(self, owner, rpt, rsid, scopes):
         """
 
         :param owner: Resource owner
         :param rpt: Requesting party token
         :param rsid: Resource set id
         :param scopes: list of scopes
-        :param requires: Other requirements
         """
 
         now = utc_time_sans_frac()
@@ -110,95 +122,31 @@ class ADB(object):
                                  exp=now + self.authzdesc_lifetime,
                                  iat=now)
 
-        self.permit.set(owner, rpt, authz, requires)
+        self.permit.set(owner, rpt, authz)
 
-    def resource_set_registration(self, method, owner, body, rsid):
+    def resource_set_registration(self, method, owner, body=None, rsid=''):
         """
 
-        :param method:
-        :param owner:
-        :param body:
-        :param rsid:
-        :return:
+        :param method: HTTP method
+        :param owner: The owner of the resource set
+        :param body: description of the resource set
+        :param rsid: resource set id
+        :return: tuple (http response code, http message, http response args)
         """
-        if method == "POST":  # create
-            args = {"oid": owner, "data": body}
-            func = self.resource_set.create
-        elif method == "PUT":  # update
-            args = {
-                "oid": owner, "data": body, "rsid": rsid,
-                # "if_match": if_match
-            }
-            func = self.resource_set.update
-        elif method == "GET":
-            args = {"oid": owner}
-            if not rsid:  # List
-                func = self.resource_set.list
-            else:  # Read
-                func = self.resource_set.read
-                args["rsid"] = rsid
-        elif method == "DELETE":
-            args = {"rsid": rsid, "oid": owner}
-            func = self.resource_set.delete
-        else:
-            return {400: {'message': "Message error"}}
 
-        logger.debug("operation: %s" % func)
-        logger.debug("operation args: %s" % (args,))
-        try:
-            body = func(**args)
-        except MessageException as err:
-            response = {
-                400: {
-                    'message': ErrorResponse(
-                        error="invalid_request",
-                        error_description=str(err)).to_json(),
-                    'content': "application/json"}}
-        except UnknownObject:
-            response = {
-                404: {
-                    'message': ErrorResponse(error="not_found").to_json(),
-                    'content': "application/json"}}
-        else:
-            response = None
-            if isinstance(body, ErrorResponse):
-                pass
-            else:
-                if func == self.resource_set.delete:
-                    # As a side effect all permissions assigned that references
-                    # this resource set should be deleted
-                    self.resource_set.delete(owner, rsid)
-                    response = {204: None}
-                elif func == self.resource_set.create:
-                    _etag = self.resource_set.etag[body["_id"]]
-                    response = {
-                        201: {
-                            'message': body.to_json(),
-                            'content': "application/json",
-                            'headers': [
-                                ("ETag", _etag),
-                                ("Location", "/{}/{}".format(self.rsr_path,
-                                                             body["_id"]))]
-                        }}
-                elif func == self.resource_set.update:
-                    _etag = self.resource_set.etag[body["_id"]]
-                    response = {204: {'content': "application/json",
-                                      'headers': [("ETag", _etag)]}}
-                elif func == self.resource_set.list:
-                    response = {200: {'message': json.dumps(body)}}
+        return self.resource_set.registration(method, owner, body, rsid)
 
-            if not response:
-                response = {200: {'message': body.to_json(),
-                                  'content': "application/json"}}
-        return response
-
-    def issue_rpt(self, ticket, requestor):
+    def issue_rpt(self, ticket, identity):
         """
         As a side effect if a RPT is issued the ticket is removed and
         can not be used again.
 
+        :param ticket: The ticket
+        :param identity: Information about the entity who wants the RPT
+        :return: A RPT
         """
-        if not self.permission_request_allowed(ticket, requestor):
+        idmap = self.permission_request_allowed(ticket, identity)
+        if not idmap:
             return None
 
         rpt = self.rpt_factory.pack(aud=[self.client_id], type='rpt')
@@ -206,7 +154,7 @@ class ADB(object):
         for rsd in self.permission_requests[ticket]:
             owner = self.resource_set.owner(rsd['resource_set_id'])
             self.permit.bind_owner_to_rpt(owner, rpt)
-
+            self.bind_rpt_to_authz_dec(rpt, idmap[rsd.to_json()])
             self.register_permission(owner, rpt, rsd['resource_set_id'],
                                      rsd['scopes'])
 
@@ -220,4 +168,33 @@ class ADB(object):
                 res.extend(self.permit.get(owner, rpt))
             return res
         except KeyError:
-            return None
+            return []
+
+    def bind_rpt_to_authz_dec(self, rpt, adid):
+        for id in adid:
+            try:
+                self.ad2rpt[id].append(rpt)
+            except KeyError:
+                self.ad2rpt[id] = [rpt]
+
+        try:
+            self.rpt2adid[rpt].extend(adid)
+        except KeyError:
+            self.rpt2adid[rpt] = adid
+
+    def remove_permission(self, owner, pid):
+        """
+        :param owner: The owner of the resource set
+        :param pid: The permission id
+        """
+        # find all RPTs that has been issued based on this permission
+        for rpt in self.ad2rpt[pid]:
+            if self.rpt2adid[rpt] == [pid]:
+                del self.rpt2adid[rpt]
+            else:
+                self.rpt2adid[rpt].remove(pid)
+            self.permit.delete_rpt(rpt)
+
+        del self.ad2rpt[pid]
+
+        self.authz_db.delete(owner, pid=pid)

@@ -1,4 +1,6 @@
+import json
 from oic import rndstr
+from oic.utils.http_util import factory, Created
 from oic.utils.keyio import KeyBundle
 from oic.utils.keyio import KeyJar
 from uma.authz_srv import RSR_PATH
@@ -59,6 +61,10 @@ WRITE = 'http://example.org/uma/write'
 RESSRV = 'https://example.com/rs'
 
 
+def _eq(l1, l2):
+    return set(l1) == set(l2)
+
+
 def test_senario_1():
     # create ADB instance
     adb = ADB(KEYJAR, 3600, issuer, RESSRV, RSR_PATH)
@@ -75,29 +81,92 @@ def test_senario_1():
     adb.permission_requests[ticket] = [prreq]
 
     # Still no authz dec. So this should fail
-    assert adb.issue_rpt(ticket, 'roger') is None
+    assert adb.issue_rpt(ticket, {'sub': 'roger'}) is None
 
     # Authz dec made
-    permission = {'resource_set_id': rsid, 'scopes': [READ]}
-    pid = adb.store_permission(permission, 'alice', 'roger')
+    permission = {'resource_set_id': rsid, 'scopes': [READ],
+                  'require': {'sub': 'roger'}}
+    pid = adb.store_permission(permission, 'alice')
 
     # Get an RPT. This should now work
-    rpt = adb.issue_rpt(ticket, 'roger')
+    rpt = adb.issue_rpt(ticket, {'sub': 'roger'})
     assert rpt
 
     # later use the RPT, turn into authz descriptions
     ad = adb.introspection(rpt)
 
     assert len(ad) == 1
-    assert ad[0]['desc']['resource_set_id'] == rsid
-    assert ad[0]['desc']['scopes'] == [READ]
+    assert ad[0]['resource_set_id'] == rsid
+    assert ad[0]['scopes'] == [READ]
 
     # Get an RPT. This should not work since the ticket is 'one time use'
-    assert adb.issue_rpt(ticket, 'roger') is None
+    assert adb.issue_rpt(ticket, {'sub': 'roger'}) is None
 
-    # Now the authz is removed
-
-    adb.authz_db.delete('alice', 'roger', pdid=pid)
+    # The authz on which issuing the RPT is based is removed
+    adb.remove_permission('alice', pid=pid)
 
     # Now introspections should fail
-    ad = adb.introspection(rpt)
+    assert adb.introspection(rpt) == []
+
+
+def test_resource_set_registration():
+    adb = ADB(KEYJAR, 3600, issuer, RESSRV, RSR_PATH)
+
+    rsd = ResourceSetDescription(name='foo', scopes=[READ, WRITE])
+
+    code, msg, kwargs = adb.resource_set_registration('POST', 'alice',
+                                                      rsd.to_json())
+
+    assert code == 201
+    http_response = factory(code, msg, **kwargs)
+    assert isinstance(http_response, Created)
+    jm = json.loads(msg)
+
+    rsid = jm['_id']
+
+    # List all rsid
+    code, msg, kwargs = adb.resource_set_registration('GET', 'alice')
+    assert code == 200
+    rsid_list = json.loads(msg)
+    assert rsid in rsid_list
+
+    # get a specific resource set
+    code, msg, kwargs = adb.resource_set_registration('GET', 'alice', rsid=rsid)
+
+    assert code == 200
+    rs = json.loads(msg)
+    assert rs['name'] == rsd['name']
+    assert rs['scopes'] == rsd['scopes']
+    assert rs['_id'] == rsid
+
+    # upload a new version of a resource set
+    rsd = ResourceSetDescription(name='foo', scopes=[READ, WRITE],
+                                 type='document')
+
+    code, msg, kwargs = adb.resource_set_registration('PUT', 'alice',
+                                                      body=rsd.to_json(),
+                                                      rsid=rsid)
+
+    assert code == 204
+    assert msg == []
+
+    # make sure the change came through
+    code, msg, kwargs = adb.resource_set_registration('GET', 'alice', rsid=rsid)
+    assert code == 200
+    rs = json.loads(msg)
+    assert _eq(list(rs.keys()),['name', 'scopes', '_id', 'type'])
+    for key in ['name', 'scopes', 'type']:
+        assert rs[key] == rsd[key]
+    assert rs['_id'] == rsid
+
+    # delete resource set
+    code, msg, kwargs = adb.resource_set_registration('DELETE', 'alice',
+                                                      rsid=rsid)
+
+    assert code == 204
+
+    # List all rsid
+    code, msg, kwargs = adb.resource_set_registration('GET', 'alice')
+    assert code == 200
+    rsid_list = json.loads(msg)
+    assert rsid_list == []

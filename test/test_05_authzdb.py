@@ -1,7 +1,5 @@
-import pytest
-from uma.authz_db import MemAuthzDB, PDDB
+from uma.authz_db import MemPermDescDB
 from uma.authz_db import PermissionDescription
-from uma.message import AuthzDescription
 
 __author__ = 'rolandh'
 
@@ -17,7 +15,6 @@ ATTR = "http://fim.example.com/uma/attr"
 
 RSD = PermissionDescription(
     resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-    entity="https://lingon.ladok.umu.se:8087/sp.xml",
     scopes=[
         "%s/givenName/Roland" % ATTR,
         "%s/surName/Hedberg" % ATTR,
@@ -31,7 +28,7 @@ RSD = PermissionDescription(
 
 
 def test_1():
-    authz_db = MemAuthzDB()
+    authz_db = MemPermDescDB()
 
     rid = authz_db.store(RSD)
 
@@ -46,50 +43,37 @@ def test_1():
     assert authz_db.read(resource_set_id="phoney") == []
 
     res = authz_db.match(
-        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-        entity="https://lingon.ladok.umu.se:8087/sp.xml")
+        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se")
 
     assert res
 
     res = authz_db.match(
         resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-        entity="https://lingon.ladok.umu.se:8087/sp.xml",
         scopes=["%s/givenName/Roland" % ATTR])
 
     assert res
 
     res = authz_db.match(
         resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-        entity="https://lingon.ladok.umu.se:8087/sp.xml",
         scopes=["%s/sn/Magnusson" % ATTR])
 
-    assert res is False
-
-    res = authz_db.match(
-        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-        entity="https://lingon.catalogix.se:8087/sp.xml")
-
-    assert res is False
+    assert res == []
 
     rols = authz_db.read(entity="https://lingon.ladok.umu.se:8087/sp.xml")
 
     assert rols
 
-    authz_db.remove(pdid=rid)
+    authz_db.remove(pid=rid)
 
     assert authz_db.match(
-        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
-        entity="https://lingon.ladok.umu.se:8087/sp.xml") == False
+        resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se") == []
 
 
 def test_2():
-    _db = PDDB()
-
-    _db.add('roland', RSD)
-
+    authz_db = MemPermDescDB()
 
     res = authz_db.match(
         resource_set_id="https://idp.catalogix.se/id/rohe0002@umu.se",
         entity="https://lingon.ladok.umu.se:8087/sp.xml")
 
-    assert res
+    assert res == []

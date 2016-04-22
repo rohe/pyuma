@@ -1,11 +1,6 @@
-# import pymongo
-#
-# from bson import ObjectId
-# from bson.errors import InvalidId
-
 from oic import rndstr
 from oic.oauth2 import SINGLE_OPTIONAL_INT
-from oic.oauth2 import SINGLE_REQUIRED_STRING
+from oic.oauth2 import SINGLE_OPTIONAL_STRING
 
 from uma.message import AuthzDescription
 
@@ -26,8 +21,8 @@ def is_sub_dict(d1, d2):
 class PermissionDescription(AuthzDescription):
     c_param = AuthzDescription.c_param.copy()
     c_param.update({
-        'entity': SINGLE_REQUIRED_STRING,
         "exp": SINGLE_OPTIONAL_INT,
+        'require': SINGLE_OPTIONAL_STRING
     })
 
 
@@ -41,6 +36,9 @@ class MemPermDescDB(object):
 
     def __getitem__(self, iid):
         return self.db[iid]
+
+    def __contains__(self, iid):
+        return iid in self.db
 
     def store(self, item):
         """
@@ -94,60 +92,78 @@ class MemPermDescDB(object):
 
         return res
 
-    def remove(self, item=None, pdid=0):
+    def remove(self, item=None, pid=0):
         """
         Delete an item. Expect either an permission description or
         and identifier for an permission description as input.
 
         :param item:
-        :param pdid:
+        :param pid:
         :return:
         """
         if item:
             try:
-                pdid = item['_id']
+                pid = item['_id']
             except KeyError:
-                pdid = 0
+                pid = 0
 
-        if pdid:
-            del self.db[pdid]
+        if pid:
+            del self.db[pid]
 
     def restart(self):
         self.db = []
 
     def read(self, **kwargs):
-        pattern = dict([(p, kwargs[p]) for p in ['resource_set_id', 'entity']
+        pattern = dict([(p, kwargs[p]) for p in ['resource_set_id']
                         if p in kwargs])
 
         return self.find(pattern)
 
-    def match(self, **kwargs):
+    def require_match(self, require, given):
+        for key, val in require.items():
+            try:
+                if given[key] != val:
+                    return False
+            except KeyError:
+                return False
+        return True
+
+    def match(self, identity=None, **kwargs):
         """
         Check that a requested permission matches something that is in the
         database.
 
-        :param resource_set_id: The identifier for the resource
-        :param entity: Who has the permission
-        :param scopes: The wanted scopes
-        :return: True or False
+        :param info: Information about the entity that wants the permission
+        :param kwargs: keyword arguments to build the filter from
+        :return: The id of the matching authz decision
         """
+        if identity is None:
+            identity = {}
 
         result = self.read(**kwargs)
 
         if len(result) == 0:
-            return False
+            return []
+
+        _res = []
+        for r in result:
+            if 'require' in r:
+                if self.require_match(r['require'], identity):
+                    _res.append(r)
+            else:
+                _res.append(r)
+        result = _res
+
+        if len(result) == 0:
+            return []
 
         try:
             _scopes = set(kwargs['scopes'])
         except KeyError:
-            return True
+            return [r['_id'] for r in result]
         else:
-            # enough the one matches
-            for res in result:
-                if set(res['scoped']).issuperset(_scopes):
-                    return True
-
-        return False
+            return [r['_id'] for r in result if
+                    set(r['scopes']).issuperset(_scopes)]
 
     def delete(self, **kwargs):
         for desc in self.read(**kwargs):
@@ -162,22 +178,25 @@ class AuthzDB(object):
         self.db = {}
         self.db_cls = MemPermDescDB
 
-    def get_db(self, owner, requestor):
-        _id = '{}:{}'.format(owner, requestor)
+    def get_db(self, owner):
+        _id = owner
         try:
             return self.db[_id]
         except KeyError:
             self.db[_id] = self.db_cls()
             return self.db[_id]
 
-    def add(self, owner, requestor, perm_desc):
-        return self.get_db(owner, requestor).store(perm_desc)
+    def add(self, owner, perm_desc):
+        return self.get_db(owner).store(perm_desc)
 
-    def match(self, owner, requestor, **kwargs):
-        return self.get_db(owner, requestor).match(**kwargs)
+    def match(self, owner, identity=None, **kwargs):
+        return self.get_db(owner).match(identity, **kwargs)
 
-    def delete(self, owner, requestor, item=None, pdid=0):
-        self.get_db(owner, requestor).remover(item, pdid)
+    def delete(self, owner, item=None, pid=0):
+        self.get_db(owner).remove(item, pid)
 
-    def list(self, owner, requestor):
-        return self.get_db(owner, requestor).list()
+    def read(self, owner, pid):
+        return self.get_db(owner)[pid]
+
+    def list(self, owner):
+        return self.get_db(owner).list()

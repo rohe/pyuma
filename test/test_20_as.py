@@ -36,7 +36,6 @@ def test_inital_add():
     ]
     #jwks, keyjar, kidd = build_keyjar(keys)
     uas.keyjar = build_keyjar(keys)[1]
-    uas.rpt_factory.keyjar = uas.keyjar
 
     data = ResourceSetDescription(name="stuff", scopes=ALL).to_json()
 

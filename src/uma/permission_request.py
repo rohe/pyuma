@@ -50,9 +50,9 @@ class PermissionRequests(object):
 
     def bind_requestor_to_ticket(self, requestor, ticket):
         try:
-            self.requestor_tickets[requestor].append(ticket)
+            self.requestor_tickets[requestor].add(ticket)
         except KeyError:
-            self.requestor_tickets[requestor] = [ticket]
+            self.requestor_tickets[requestor] = {ticket}
 
         self.ticket2requestor[ticket] = requestor
 

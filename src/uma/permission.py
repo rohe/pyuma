@@ -10,30 +10,32 @@ class Permission(object):
     """
     def __init__(self):
         self.db = {}
-        self.owner2rpt = {}
         self.rpt2owner = {}
 
     def init_owner(self, owner):
         self.db[owner] = {}
 
-    def set(self, owner, rpt, authz_desc, require=None):
+    def set(self, owner, rpt, authz_desc):
         """
         Note there can be more then one authz_desc per owner-rpt pair
 
         :param owner: The owner of the resource
         :param rpt: A key to store the description under
         :param authz_desc: The Authz description
-        :param require: Whatever else is necessary to use this authz.
         :return:
         """
         if owner not in self.db:
             self.init_owner(owner)
 
-        _val = {"desc": authz_desc, "req": require}
+        _val = authz_desc
+        try:
+            self.rpt2owner[rpt].add(owner)
+        except KeyError:
+            self.rpt2owner[rpt] = {owner}
         try:
             self.db[owner][rpt].append(_val)
         except KeyError:
-            self.db[owner] = {rpt: [_val]}
+            self.db[owner][rpt] = [_val]
 
     def get(self, owner, rpt):
         return self.db[owner][rpt]
@@ -41,16 +43,28 @@ class Permission(object):
     def keys(self, owner):
         return list(self.db[owner].keys())
 
-    def delete(self, owner, rsid):
+    def delete_rsid(self, owner, rsid):
         _remove = []
-        for rpt, desc in list(self.db[owner].items()):
-            if desc["resource_set_id"] == rsid:
-                _remove.append(rpt)
+        try:
+            items = self.db[owner].items()
+        except KeyError:
+            pass
+        else:
+            for rpt, descs in items:
+                for desc in descs:
+                    if desc["resource_set_id"] == rsid:
+                        _remove.append(rpt)
 
         for rpt in _remove:
-            del self.db[owner][rpt]
+            self.delete_rpt(rpt)
 
         return _remove
+
+    def delete_rpt(self, rpt):
+        #self.owner2rpt[owner].remove(rpt)
+        for owner in self.rpt2owner[rpt]:
+            del self.db[owner][rpt]
+        del self.rpt2owner[rpt]
 
     @staticmethod
     def construct_authz_desc(rsid, scopes, lifetime=3600):
@@ -60,13 +74,6 @@ class Permission(object):
 
     def bind_owner_to_rpt(self, owner, rpt):
         try:
-            if owner not in self.rpt2owner[rpt]:
-                self.rpt2owner[rpt].append(owner)
+            self.rpt2owner[rpt].add(owner)
         except KeyError:
-            self.rpt2owner[rpt] = [owner]
-
-        try:
-            if rpt not in self.owner2rpt[owner]:
-                self.owner2rpt[owner].append(rpt)
-        except KeyError:
-            self.owner2rpt[owner] = [rpt]
+            self.rpt2owner[rpt] = {owner}
