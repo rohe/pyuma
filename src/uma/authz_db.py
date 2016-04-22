@@ -137,19 +137,17 @@ class MemPermDescDB(object):
         if len(result) == 0:
             return False
 
-        matched = True
         try:
-            _scopes = kwargs['scopes']
+            _scopes = set(kwargs['scopes'])
         except KeyError:
             return True
         else:
+            # enough the one matches
             for res in result:
-                for scope in _scopes:
-                    if scope not in res['scopes']:
-                        matched = False
-                        break
+                if set(res['scoped']).issuperset(_scopes):
+                    return True
 
-        return matched
+        return False
 
     def delete(self, **kwargs):
         for desc in self.read(**kwargs):
@@ -173,10 +171,13 @@ class AuthzDB(object):
             return self.db[_id]
 
     def add(self, owner, requestor, perm_desc):
-        self.get_db(owner, requestor).store(perm_desc)
+        return self.get_db(owner, requestor).store(perm_desc)
 
     def match(self, owner, requestor, **kwargs):
-        self.get_db(owner, requestor).match(**kwargs)
+        return self.get_db(owner, requestor).match(**kwargs)
 
     def delete(self, owner, requestor, item=None, pdid=0):
         self.get_db(owner, requestor).remover(item, pdid)
+
+    def list(self, owner, requestor):
+        return self.get_db(owner, requestor).list()

@@ -26,15 +26,12 @@ from oic.utils.http_util import NoContent
 from oic.utils.http_util import Created
 from oic.utils.http_util import Unauthorized
 from oic.utils.http_util import Response
-from oic.utils.jwt import JWT
 from oic.utils.keyio import KeyJar
 from oic.utils.time_util import utc_time_sans_frac
 
-from uma.authz_db import AuthzDB
 from uma.client import UMA_SCOPE
 from uma.message import AuthorizationDataRequest
 from uma.message import AuthorizationDataResponse
-from uma.message import AuthzDescription
 from uma.message import ErrorResponse
 from uma.message import IntrospectionRequest
 from uma.message import IntrospectionResponse
@@ -43,9 +40,6 @@ from uma.message import PermissionRegistrationResponse
 from uma.message import ProviderConfiguration
 from uma.message import RPTRequest
 from uma.message import RQP_CLAIMS_GRANT_TYPE
-from uma.permission import Permission
-from uma.permission_request import PermissionRequests
-from uma.rsdb import MemResourceSetDB
 from uma.rsdb import UnknownObject
 
 __author__ = 'rolandh'
@@ -214,159 +208,6 @@ def authenticated_call(sdb, func, authn, request=None, **kwargs):
     return func(**kwargs)
 
 
-class ADB(object):
-    """ Expects to be one ADB instance per Resource Server """
-
-    def __init__(self, keyjar, rpt_lifetime, iss):
-        # database with all the registered resource sets
-        self.resource_set = MemResourceSetDB()
-        # database with all permission requests
-        self.permission_requests = PermissionRequests()
-        # database with all authorization decisions
-        self.authz_db = AuthzDB()
-        # database with all registered permissions
-        self.permit = Permission()
-
-        self.map_rsid_id = {}
-        self.map_id_rsid = {}
-        self.map_user_id = {}
-
-        self.rpt_factory = JWT(keyjar, lifetime=rpt_lifetime, iss=iss)
-        self.authzdesc_lifetime = 3600
-
-    def pending_permission_requests(self, owner, user):
-        """
-        Return outstanding permission requests that is known to belong to
-        an owner and bound to a requestor.
-
-        :param owner:
-        :param user:
-        :return:
-        """
-        res = []
-        for tick in self.permission_requests.requestor2tickets(user):
-            rsid = self.permission_requests.ticket2rsid(tick)
-            if self.resource_set.belongs_to(rsid, owner):
-                res.append(tick)
-        return res
-
-    def store_permissions(self, permissions, owner, user, client_id):
-        for rsid, scopes in permissions.items():
-            max_scopes = self.resource_set.read(owner, rsid)["scopes"]
-
-            # if no scopes are defined == all are requested
-            if scopes is None:
-                scopes = max_scopes
-            else:
-                scopes = [s for s in scopes if s in max_scopes]
-
-            rpt = self.rpt_factory.pack(aud=[client_id], type='rpt')
-            self.register_permission(owner, rpt, rsid, scopes, client_id)
-
-        pending = self.pending_permission_requests(owner, user)
-
-        # find request that is not covered by earlier permission requests
-        # _new = [k for k in list(permissions.keys()) if k not in pending]
-        #
-        # for rsid in _new:
-        #     max_scopes = self.resource_set.read(owner, rsid)["scopes"]
-        #     scopes = permissions[rsid]
-        #     self.permit.set(owner, user, rsid, scopes)
-        #
-        # _rem = [k for k in pending if k not in permissions]
-        # for rsid in _rem:
-        #     self.permit.delete(owner, user, rsid)
-
-    def register_permission(self, owner, rpt, rsid, scopes, client_id,
-            requires=None):
-        """
-
-        :param owner: Resource owner
-        :param rpt: Requesting party token
-        :param rsid: Resource set id
-        :param scopes: list of scopes
-        :param client_id: The client id of the resource server
-        :param requires: Other requirements
-        """
-
-        now = utc_time_sans_frac()
-        authz = AuthzDescription(resource_set_id=rsid, scopes=scopes,
-                                 exp=now + self.authzdesc_lifetime,
-                                 iat=now)
-
-        self.permit.set(owner, rpt, authz, requires)
-
-    def resource_set_registration(self, method, owner, body, rsid):
-        """
-
-        :param method:
-        :param owner:
-        :param body:
-        :param rsid:
-        :return:
-        """
-        if method == "POST":  # create
-            args = {"oid": owner, "data": body}
-            func = self.resource_set.create
-        elif method == "PUT":  # update
-            args = {
-                "oid": owner, "data": body, "rsid": rsid,
-                # "if_match": if_match
-            }
-            func = self.resource_set.update
-        elif method == "GET":
-            args = {"oid": owner}
-            if not rsid:  # List
-                func = self.resource_set.list
-            else:  # Read
-                func = self.resource_set.read
-                args["rsid"] = rsid
-        elif method == "DELETE":
-            args = {"rsid": rsid, "oid": owner}
-            func = self.resource_set.delete
-        else:
-            return BadRequest("Message error")
-
-        logger.debug("operation: %s" % func)
-        logger.debug("operation args: %s" % (args,))
-        try:
-            body = func(**args)
-        except MessageException as err:
-            _err = ErrorResponse(error="invalid_request",
-                                 error_description=str(err))
-            response = {'response':BadRequest, 'message':_err.to_json(),
-                        'content':"application/json"}
-
-        except UnknownObject:
-            _err = ErrorResponse(error="not_found")
-            response = NotFound(_err.to_json(), content="application/json")
-        else:
-            response = None
-            if isinstance(body, ErrorResponse):
-                pass
-            else:
-                if func == self.resource_set.delete:
-                    # As a side effect all permissions assigned that references
-                    # this resource set should be deleted
-                    self.resource_set.delete(owner, rsid)
-                    response = NoContent()
-                elif func == self.resource_set.create:
-                    _etag = self.resource_set.etag[body["_id"]]
-                    response = Created(
-                        body.to_json(), content="application/json",
-                        headers=[("ETag", _etag),
-                                 ("Location", "/{}/{}".format(RSR_PATH,
-                                                              body["_id"]))])
-                elif func == self.resource_set.update:
-                    _etag = self.resource_set.etag[body["_id"]]
-                    response = NoContent(content="application/json",
-                                         headers=[("ETag", _etag)])
-                elif func == self.resource_set.list:
-                    response = Response(json.dumps(body))
-
-            if not response:
-                response = Response(body.to_json(), content="application/json")
-        return response
 
 class UmaAS(object):
     endp = [AuthorizationEndpoint, DynamicClientEndpoint,

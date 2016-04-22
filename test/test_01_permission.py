@@ -15,8 +15,8 @@ def _eq(l1, l2):
 def test_permisson_get():
     perm_db = Permission()
     perm_db.init_owner('alice')
-    perm_db.set_request('alice', 'alice', 'rsid0', ['read', 'write'])
-    _spec = perm_db.get_request('alice', 'alice', 'rsid0')
+    perm_db.set('alice', 'alice', 'rsid0', ['read', 'write'])
+    _spec = perm_db.get('alice', 'alice', 'rsid0')
 
     assert _spec["scopes"] == ['read', 'write']
     assert _spec['iat']
@@ -25,23 +25,23 @@ def test_permisson_get():
 def test_permisson_get_fail():
     perm_db = Permission()
     perm_db.init_owner('alice')
-    perm_db.set_request('alice', 'alice', 'rsid', ['read', 'write'])
+    perm_db.set('alice', 'alice', 'rsid', ['read', 'write'])
 
     with pytest.raises(KeyError):
-        perm_db.get_request('alice', 'bob', 'rsid')
+        perm_db.get('alice', 'bob', 'rsid')
 
     with pytest.raises(KeyError):
-        perm_db.get_request('alice', 'alice', 'xxxx')
+        perm_db.get('alice', 'alice', 'xxxx')
 
     with pytest.raises(KeyError):
-        perm_db.get_request('bob', 'alice', 'xxxx')
+        perm_db.get('bob', 'alice', 'xxxx')
 
 
 def test_get_request_by_requestor():
     perm_db = Permission()
     perm_db.init_owner('alice')
-    perm_db.set_request('alice', 'alice', 'rsid0', ['read', 'write'])
-    perm_db.set_request('alice', 'alice', 'rsid1', ['read', 'exec'])
+    perm_db.set('alice', 'alice', 'rsid0', ['read', 'write'])
+    perm_db.set('alice', 'alice', 'rsid1', ['read', 'exec'])
 
     _spec = perm_db.get_request_by_requestor('alice', 'alice')
 
@@ -51,8 +51,8 @@ def test_get_request_by_requestor():
 def test_get_requests():
     perm_db = Permission()
     perm_db.init_owner('alice')
-    perm_db.set_request('alice', 'alice', 'rsid0', ['read', 'write'])
-    perm_db.set_request('alice', 'bob', 'rsid1', ['read', 'exec'])
+    perm_db.set('alice', 'alice', 'rsid0', ['read', 'write'])
+    perm_db.set('alice', 'bob', 'rsid1', ['read', 'exec'])
 
     _spec = perm_db.get_requests('alice')
 
@@ -62,9 +62,9 @@ def test_get_requests():
 def test_delete_request():
     perm_db = Permission()
     perm_db.init_owner('alice')
-    perm_db.set_request('alice', 'alice', 'rsid0', ['read', 'write'])
-    perm_db.set_request('alice', 'bob', 'rsid0', ['read', 'write'])
-    perm_db.set_request('alice', 'bob', 'rsid1', ['read', 'exec'])
+    perm_db.set('alice', 'alice', 'rsid0', ['read', 'write'])
+    perm_db.set('alice', 'bob', 'rsid0', ['read', 'write'])
+    perm_db.set('alice', 'bob', 'rsid1', ['read', 'exec'])
 
     _spec = perm_db.get_request_by_requestor('alice', 'bob')
     assert len(_spec) == 2
@@ -80,9 +80,9 @@ def test_delete_request():
 def test_delete_request_by_resource_id():
     perm_db = Permission()
     perm_db.init_owner('alice')
-    perm_db.set_request('alice', 'alice', 'rsid0', ['read', 'write'])
-    perm_db.set_request('alice', 'bob', 'rsid0', ['read', 'write'])
-    perm_db.set_request('alice', 'bob', 'rsid1', ['read', 'exec'])
+    perm_db.set('alice', 'alice', 'rsid0', ['read', 'write'])
+    perm_db.set('alice', 'bob', 'rsid0', ['read', 'write'])
+    perm_db.set('alice', 'bob', 'rsid1', ['read', 'exec'])
 
     perm_db.delete_request_by_resource_id('alice', 'rsid0')
 

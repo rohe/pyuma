@@ -108,3 +108,6 @@ class MemResourceSetDB(ResourceSetDB):
 
     def belongs_to(self, rsid, owner):
         return rsid in self.db[owner]
+
+    def owner(self, rsid):
+        return self.rsid2oid[rsid]
