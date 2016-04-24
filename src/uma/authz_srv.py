@@ -20,7 +20,7 @@ from oic.oic.provider import AuthorizationEndpoint
 from oic.utils.authn.client import CLIENT_AUTHN_METHOD
 from oic.utils.authn.user import FailedAuthentication
 from oic.utils.authn.user import ToOld
-from oic.utils.http_util import BadRequest
+from oic.utils.http_util import BadRequest, factory
 from oic.utils.http_util import NotFound
 from oic.utils.http_util import NoContent
 from oic.utils.http_util import Created
@@ -300,68 +300,9 @@ class UmaAS(object):
         logger.debug("handling resource set belonging to '%s'" % owner)
 
         adb = self.get_adb(client_id)
-
-        if method == "POST":  # create
-            args = {"oid": owner, "data": body}
-            func = adb.resource_set.create
-        elif method == "PUT":  # update
-            args = {
-                "oid": owner, "data": body, "rsid": rsid,
-                # "if_match": if_match
-            }
-            func = adb.resource_set.update
-        elif method == "GET":
-            args = {"oid": owner}
-            if not rsid:  # List
-                func = adb.resource_set.list
-            else:  # Read
-                func = adb.resource_set.read
-                args["rsid"] = rsid
-        elif method == "DELETE":
-            args = {"rsid": rsid, "oid": owner}
-            func = adb.resource_set.delete
-        else:
-            return BadRequest("Message error")
-
-        logger.debug("operation: %s" % func)
-        logger.debug("operation args: %s" % (args,))
-        try:
-            body = func(**args)
-        except MessageException as err:
-            _err = ErrorResponse(error="invalid_request",
-                                 error_description=str(err))
-            response = BadRequest(_err.to_json(), content="application/json")
-        except UnknownObject:
-            _err = ErrorResponse(error="not_found")
-            response = NotFound(_err.to_json(), content="application/json")
-        else:
-            response = None
-            if isinstance(body, ErrorResponse):
-                pass
-            else:
-                if func == adb.resource_set.delete:
-                    # As a side effect all permissions assigned that references
-                    # this resource set should be deleted
-                    adb.resource_set.delete(owner, rsid)
-                    response = NoContent()
-                elif func == adb.resource_set.create:
-                    _etag = adb.resource_set.etag[body["_id"]]
-                    response = Created(
-                        body.to_json(), content="application/json",
-                        headers=[("ETag", _etag),
-                                 ("Location", "/{}/{}".format(RSR_PATH,
-                                                              body["_id"]))])
-                elif func == adb.resource_set.update:
-                    _etag = adb.resource_set.etag[body["_id"]]
-                    response = NoContent(content="application/json",
-                                         headers=[("ETag", _etag)])
-                elif func == adb.resource_set.list:
-                    response = Response(json.dumps(body))
-
-            if not response:
-                response = Response(body.to_json(), content="application/json")
-
-        return response
+        code, msg, kwargs = adb.resource_set_registration(method, owner,
+                                                          body=body, rsid=rsid)
+        return factory(code, msg, **kwargs)
 
     def _collapse(self, items, ressrv_id):
         referenced = {}
@@ -503,17 +444,18 @@ class UmaAS(object):
         :return: HTTP Response
         """
 
+        adb = self.get_adb(kwargs['client_id'])
         prr = self.to_prr(request, kwargs['client_id'])
         if prr:
-            adb = self.get_adb(kwargs['client_id'])
-            _ticket = rndstr(24)
+            _ticket = adb.ticket_factory.pack(aud=[kwargs['client_id']],
+                                              type='ticket')
             logging.debug("Registering permission request: %s" % request)
             adb.permission_requests[_ticket] = prr
             resp = PermissionRegistrationResponse(ticket=_ticket)
 
             return Created(resp.to_json(), content="application/json")
         else:
-            BadRequest("Can't register permission for unknown resource")
+            return BadRequest("Can't register permission for unknown resource")
 
     def requesting_party_claims_endpoint(self, request="", **kwargs):
         """
@@ -624,64 +566,8 @@ class UmaAS(object):
         """
         adb = self.get_adb(client_id)
         adr = AuthorizationDataRequest().from_json(kwargs["request"])
-
-        # Get request permission that the resource server has registered
-        try:
-            prr_list = adb.permission_requests.get_request(adr["ticket"])
-        except KeyError:
-            errmsg = ErrorResponse(error="invalid_ticket")
-            return BadRequest(errmsg.to_json(), content="application/json")
-
-        adb.permission_requests.del_request(adr["ticket"])
-        try:
-            _rpt = adr["rpt"]
-        except KeyError:
-            _rpt = rndstr(32)
-
-        for prr in prr_list:
-            _rsid = prr["resource_set_id"]
-
-            # Verify that the scopes are defined for the resource set
-            owner = adb.resource_set.rsid2oid[_rsid]
-            rsd = adb.resource_set.read(owner, _rsid)
-            for scope in prr["scopes"]:
-                try:
-                    assert scope in rsd["scopes"]
-                except AssertionError:
-                    errmsg = ErrorResponse(error="not_authorized",
-                                           error_description="Undefined scopes")
-                    return BadRequest(errmsg.to_json(),
-                                      content="application/json")
-
-            # Is there any permissions registered by the owner, if so verify
-            # that it allows what is requested. Return what is allowed !
-
-            try:
-                _perm = adb.permit.get_request(owner, entity, _rsid)
-            except KeyError:  #
-                errmsg = ErrorResponse(error="not_authorized",
-                                       error_description="No permission given")
-                return BadRequest(errmsg.to_json(), content="application/json")
-            else:
-                _scopes = []
-                for scope in prr["scopes"]:
-                    try:
-                        assert scope in _perm["scopes"]
-                    except AssertionError:
-                        pass
-                    else:
-                        _scopes.append(scope)
-
-                # bind _requester to specific RPT for this user
-                try:
-                    self.eid2rpt[owner][entity] = _rpt
-                except KeyError:
-                    self.eid2rpt[owner] = {entity: _rpt}
-
-                self.register_permission(owner, _rpt, _rsid, _scopes, client_id)
-
-        rsp = AuthorizationDataResponse(rpt=_rpt)
-
+        rpt = adb.issue_rpt(adr['ticket'], {'sub': entity})
+        rsp = AuthorizationDataResponse(rpt=rpt)
         return Response(rsp.to_json())
 
     def name2id(self, owner, rsid, client_id):
@@ -714,50 +600,30 @@ class UmaAS(object):
                 # immediate expiration
                 self.session.update(_rpt, expires_at=0)
 
-    def store_permission(self, owner, user, permissions, client_id):
+    def store_permission(self, owner, permission, client_id):
         """
         Store permissions given by <owner> to <user>
 
         :param owner: The resource owner
-        :param user: Identifier for the entity given the permission
-        :param permissions: dictionary with Resource set IDs as keys and scopes
+        :param permission: dictionary with Resource set IDs as keys and scopes
             as values
         :param client_id: The Resource Servers client_id
         """
 
-        logger.info("store: (%s, %s, %s)" % (owner, user, permissions))
+        logger.info("store: ({}, {})".format(owner, permission))
 
         adb = self.get_adb(client_id)
-        for rsid, scopes in permissions.items():
-            max_scopes = adb.resource_set.read(owner, rsid)["scopes"]
+        return adb.store_permission(permission=permission, owner=owner)
 
-            # if no scopes are defined == all are requested
-            if scopes is None:
-                scopes = max_scopes
-            else:
-                scopes = [s for s in scopes if s in max_scopes]
-
-            rpt = self.rpt_factory.pack(aud=[client_id], type='rpt')
-            self.register_permission(owner, rpt, rsid, scopes, client_id)
-
-        pending = adb.pending_permission_requests(owner, user)
-
-        # find request that is not covered by earlier permission requests
-        _new = [k for k in list(permissions.keys()) if k not in pending]
-
-        for rsid in _new:
-            max_scopes = adb.resource_set.read(owner, rsid)["scopes"]
-            scopes = permissions[rsid]
-            adb.permit.set_request(owner, user, rsid, scopes)
-
-        _rem = [k for k in pending if k not in permissions]
-        for rsid in _rem:
-            adb.delete_request(owner, user, rsid)
-
-    def read_permission(self, user, requestor, rsid, client_id):
+    def read_permission(self, owner, perm_id, client_id):
+        """
+        :param owner:
+        :param: perm_id: Permission ID
+        :param client_id:
+        :return: A PermissionDescription instance
+        """
         adb = self.get_adb(client_id)
-        _perms = adb.permit.get_request(user, requestor, rsid)
-        return [(p['scopes'], p['iat']) for p in _perms]
+        return adb.read_permission(owner, perm_id)
 
     def rec_rm_permission(self, owner, requestor, rsid, client_id):
         """

@@ -1,28 +1,34 @@
-import json
 import logging
 
-from oic.exception import MessageException
 from oic.utils.jwt import JWT
 from oic.utils.time_util import utc_time_sans_frac
 
 from uma.authz_db import AuthzDB
 from uma.authz_db import PermissionDescription
 from uma.message import AuthzDescription
-from uma.message import ErrorResponse
 from uma.permission import Permission
 from uma.permission_request import PermissionRequests
 from uma.rsdb import MemResourceSetDB
-from uma.rsdb import UnknownObject
 
 __author__ = 'roland'
 
 logger = logging.getLogger(__name__)
 
 
+class TicketError(Exception):
+    def __init__(self, typ, reason=''):
+        self.typ = typ
+        self.reason = reason
+
+    def __str__(self):
+        return '{}:{}'.format(self.typ, self.reason)
+
+
 class ADB(object):
     """ Expects to be one ADB instance per Resource Server """
 
-    def __init__(self, keyjar, rpt_lifetime, iss, ressrv_id, rsr_path):
+    def __init__(self, keyjar, rpt_lifetime, iss, ressrv_id, rsr_path,
+                 ticket_lifetime=3600):
         # database with all permission requests
         self.permission_requests = PermissionRequests()
         # database with all authorization decisions
@@ -38,6 +44,7 @@ class ADB(object):
         self.map_user_id = {}
 
         self.rpt_factory = JWT(keyjar, lifetime=rpt_lifetime, iss=iss)
+        self.ticket_factory = JWT(keyjar, lifetime=ticket_lifetime, iss=iss)
         self.authzdesc_lifetime = 3600
         self.client_id = ressrv_id
         self.rsr_path = rsr_path
@@ -60,6 +67,11 @@ class ADB(object):
                 res.append(tick)
         return res
 
+    def is_expired(self, tinfo):
+        if utc_time_sans_frac() <= tinfo['exp']:
+            return False
+        return True
+
     def permission_request_allowed(self, ticket, identity):
         """
         Verify that whatever permission requests the ticket represents
@@ -70,11 +82,18 @@ class ADB(object):
         :return: Dictionary, with permission request as key and
             identifiers of authz decisions that permits the requests as values.
         """
+
+        _tinfo = self.rpt_factory.unpack(ticket)
+        if self.is_expired(_tinfo):
+            raise TicketError('expired',
+                              '{} > {}'.format(utc_time_sans_frac(),
+                                               _tinfo['exp']))
+
         try:
             prrs = self.permission_requests[ticket]
         except KeyError:
             logger.warning("Someone is using a ticket that doesn't exist")
-            return False
+            raise TicketError('invalid', ticket)
         else:
             result = {}
             for prr in prrs:
@@ -82,7 +101,7 @@ class ADB(object):
                 _adids = self.authz_db.match(owner, identity, **prr.to_dict())
                 if not _adids:
                     # all or nothing
-                    return {}
+                    raise TicketError('not_authorized')
                 result[prr.to_json()] = _adids
             return result
 
@@ -198,3 +217,6 @@ class ADB(object):
         del self.ad2rpt[pid]
 
         self.authz_db.delete(owner, pid=pid)
+
+    def read_permission(self, owner, pid):
+        return self.authz_db.read(owner, pid)

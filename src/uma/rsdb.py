@@ -187,7 +187,8 @@ class MemResourceSetDB(ResourceSetDB):
                                                              comres["_id"]))]})
                 elif func == self.update:
                     _etag = self.etag[comres["_id"]]
-                    response = (204, [], {'headers': [("ETag", _etag)]})
+                    response = (200, comres.to_json(),
+                                {'headers': [("ETag", _etag)]})
                 elif func == self.list:
                     response = (200, json.dumps(comres),
                                 {'content': "application/json"})

@@ -8,6 +8,10 @@ __author__ = 'roland'
 READ = 'http://example.org/uma/read'
 WRITE = 'http://example.org/uma/write'
 
+def _eq(l1, l2):
+    return set(l1) == set(l2)
+
+
 class TestPermReq(object):
     @pytest.fixture(autouse=True)
     def create_db(self):
@@ -49,7 +53,7 @@ class TestPermReq(object):
         self.pr['ticket2']= [prreq]
 
         assert self.pr.len() == 2
-        assert set(self.pr.keys()) == {'ticket1', 'ticket2'}
+        assert _eq(set(self.pr.keys()), {'ticket1', 'ticket2'})
 
         self.pr.bind_requestor_to_ticket('requestor', 'ticket1')
 
@@ -59,8 +63,8 @@ class TestPermReq(object):
 
         self.pr.bind_requestor_to_ticket('requestor', 'ticket2')
 
-        assert self.pr.requestor2tickets('requestor') == ['ticket1',
-                                                          'ticket2']
+        assert _eq(self.pr.requestor2tickets('requestor'), ['ticket1',
+                                                            'ticket2'])
 
         assert self.pr.rsid2requestor('2') == ['requestor']
 

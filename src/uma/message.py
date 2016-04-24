@@ -48,7 +48,7 @@ class OIDCProviderConfiguration(ProviderConfigurationResponse):
         "aat_grant_types_supported": REQUIRED_LIST_OF_STRINGS})
 
 
-class Scope(Message):
+class ScopeDescription(Message):
     c_param = {
         "name": SINGLE_REQUIRED_STRING,
         "icon_uri": SINGLE_OPTIONAL_STRING,
@@ -328,7 +328,7 @@ class RequestingPartyResponse(Message):
 
 MSG = {
     "ProviderConfiguration": ProviderConfiguration,
-    "Scope": Scope,
+    "ScopeDescription": ScopeDescription,
     "ResourceSetDescription": ResourceSetDescription,
     "StatusResponse": StatusResponse,
     "IntrospectionRequest": IntrospectionRequest,

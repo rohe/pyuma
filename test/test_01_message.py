@@ -4,7 +4,7 @@ from uma.message import IntrospectionResponse
 from uma.message import RequiredClaims
 from uma.message import RequestingPartyClaims
 from uma.message import ResourceSetDescription
-from uma.message import Scope
+from uma.message import ScopeDescription
 
 __author__ = 'rolandh'
 
@@ -14,12 +14,12 @@ def _eq(l1, l2):
 
 
 def test_scope():
-    scope = Scope(name="View",
-                  icon_uri="http://www.example.com/icons/reading-glasses")
+    scope = ScopeDescription(
+        name="View", icon_uri="http://www.example.com/icons/reading-glasses")
 
     msg = scope.to_json()
 
-    _scope = Scope().deserialize(msg, "json")
+    _scope = ScopeDescription().deserialize(msg, "json")
 
     assert _eq(list(_scope.keys()), ["name", "icon_uri"])
 
@@ -148,7 +148,7 @@ def test_ser_error_details():
 
     _ed = ErrorDetails().from_json(msg)
     assert _eq(list(_ed.keys()), ['authentication_context',
-                                 'requesting_party_claims'])
+                                  'requesting_party_claims'])
     _ed['authentication_context'].to_dict() == {
         'required_acr': ['https://example.com/acrs/LOA3.14159']}
 

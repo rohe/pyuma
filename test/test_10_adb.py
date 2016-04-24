@@ -5,7 +5,7 @@ from oic.utils.keyio import KeyBundle
 from oic.utils.keyio import KeyJar
 from uma.authz_srv import RSR_PATH
 
-from uma.adb import ADB
+from uma.adb import ADB, TicketError
 from uma.message import PermissionRegistrationRequest
 from uma.message import ResourceSetDescription
 
@@ -77,11 +77,16 @@ def test_senario_1():
     # assume no authorization decisions has been made
     # accessing a resource set will eventually result in a ticket being issued
     prreq = PermissionRegistrationRequest(resource_set_id=rsid, scopes=[READ])
-    ticket = rndstr(16)
+    ticket = adb.ticket_factory.pack(aud=['client_id'])
     adb.permission_requests[ticket] = [prreq]
 
     # Still no authz dec. So this should fail
-    assert adb.issue_rpt(ticket, {'sub': 'roger'}) is None
+    try:
+        adb.issue_rpt(ticket, {'sub': 'roger'})
+    except TicketError as err:
+        assert err.typ == 'not_authorized'
+    else:
+        assert False
 
     # Authz dec made
     permission = {'resource_set_id': rsid, 'scopes': [READ],
@@ -100,7 +105,12 @@ def test_senario_1():
     assert ad[0]['scopes'] == [READ]
 
     # Get an RPT. This should not work since the ticket is 'one time use'
-    assert adb.issue_rpt(ticket, {'sub': 'roger'}) is None
+    try:
+        adb.issue_rpt(ticket, {'sub': 'roger'})
+    except TicketError as err:
+        assert err.typ == 'invalid'
+    else:
+        assert False
 
     # The authz on which issuing the RPT is based is removed
     adb.remove_permission('alice', pid=pid)
@@ -147,8 +157,9 @@ def test_resource_set_registration():
                                                       body=rsd.to_json(),
                                                       rsid=rsid)
 
-    assert code == 204
-    assert msg == []
+    assert code == 200
+    rs = json.loads(msg)
+    assert rs['_id'] == rsid
 
     # make sure the change came through
     code, msg, kwargs = adb.resource_set_registration('GET', 'alice', rsid=rsid)
