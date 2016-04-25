@@ -164,11 +164,13 @@ class TestAS(object):
         ticket = json.loads(resp.message)['ticket']
 
         # (3) registration of authorization
-        permission = {'resource_set_id': rsid, 'scopes': [SCOPES['read']],
+        permission = {'resource_set_id': rsid, 'scopes': read_write,
                       'require': {'sub': 'roger'}}
         adb = self.uas.get_adb("12345678")
         adb.store_permission(permission, 'alice')
 
-        # Get an RPT. This should now work
+        # Get an RPT. This should work
         req = AuthorizationDataRequest(ticket=ticket)
-        resp = self.uas.rpt_endpoint_('roger', '87654321', request=req)
+        resp = self.uas.rpt_endpoint_('roger', '12345678',
+                                      request=req.to_json())
+        assert resp
